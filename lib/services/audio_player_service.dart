@@ -165,6 +165,24 @@ class AudioPlayerService extends ChangeNotifier {
       }
       notifyListeners();
 
+      // Leer la duración exacta de cada archivo local en segundo plano
+      for (int i = 0; i < _librarySongs.length; i++) {
+        if (_librarySongs[i].duration == Duration.zero && _librarySongs[i].localAudioPath != null) {
+          try {
+            final probe = AudioPlayer();
+            final dur = await probe.setFilePath(_librarySongs[i].localAudioPath!);
+            if (dur != null) {
+              _librarySongs[i] = _librarySongs[i].copyWith(duration: dur);
+              if (_currentSong?.id == _librarySongs[i].id) {
+                _currentSong = _librarySongs[i];
+              }
+              notifyListeners();
+            }
+            await probe.dispose();
+          } catch (_) {}
+        }
+      }
+
       // Procesar etiquetas de IA en segundo plano de forma no bloqueante
       if (_enableAiTagging) {
         for (int i = 0; i < _librarySongs.length; i++) {
@@ -348,6 +366,24 @@ class AudioPlayerService extends ChangeNotifier {
       notifyListeners();
     }
     return enriched;
+  }
+
+  /// Editar manualmente Título y Artista y re-identificar carátula oficial automáticamente
+  Future<Song> updateSongMetadata(Song song, String newTitle, String newArtist) async {
+    final updated = song.copyWith(
+      title: newTitle.trim(),
+      artist: newArtist.trim(),
+    );
+    final index = _librarySongs.indexWhere((s) => s.id == song.id);
+    if (index != -1) {
+      _librarySongs[index] = updated;
+      if (_currentSong?.id == song.id) {
+        _currentSong = updated;
+      }
+      notifyListeners();
+    }
+    final enriched = await runAiIdentificationForSong(updated);
+    return enriched ?? updated;
   }
 
   @override

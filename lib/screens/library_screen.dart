@@ -20,6 +20,90 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String _searchQuery = '';
   bool _isSearching = false;
 
+  void _showEditMetadataDialog(BuildContext context, AudioPlayerService audioService, Song song) {
+    final titleController = TextEditingController(text: song.title);
+    final artistController = TextEditingController(text: song.artist == 'Artista Local' ? '' : song.artist);
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: AppColors.surfaceContainerHigh,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: Text(
+            'Editar Metadatos',
+            style: AppTypography.headlineSm.copyWith(color: AppColors.primary),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Escribe el nombre correcto de la canción y el artista para que la IA descargue la carátula oficial y álbum.',
+                style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: titleController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Nombre de la canción',
+                  labelStyle: const TextStyle(color: AppColors.primary),
+                  filled: true,
+                  fillColor: AppColors.surfaceContainerLow,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: artistController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Nombre del Artista',
+                  labelStyle: const TextStyle(color: AppColors.secondary),
+                  filled: true,
+                  fillColor: AppColors.surfaceContainerLow,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar', style: TextStyle(color: AppColors.onSurfaceVariant)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryContainer,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () async {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Buscando carátula oficial y álbum con IA...'),
+                    backgroundColor: AppColors.primaryContainer,
+                  ),
+                );
+                final updated = await audioService.updateSongMetadata(song, titleController.text, artistController.text);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('¡Actualizado!: ${updated.title} - ${updated.artist}'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Guardar e Identificar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final audioService = Provider.of<AudioPlayerService>(context);
@@ -618,7 +702,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       ),
                       color: AppColors.surfaceContainerHigh,
                       onSelected: (val) {
-                        if (val == 'ai') {
+                        if (val == 'edit') {
+                          _showEditMetadataDialog(context, audioService, song);
+                        } else if (val == 'ai') {
                           audioService.runAiIdentificationForSong(song);
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
@@ -631,6 +717,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         }
                       },
                       itemBuilder: (context) => [
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: const Row(
+                            children: [
+                              Icon(Icons.edit_note, color: AppColors.primary),
+                              SizedBox(width: 8),
+                              Text('Editar Título y Artista'),
+                            ],
+                          ),
+                        ),
                         PopupMenuItem(
                           value: 'like',
                           child: Row(
@@ -648,7 +744,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           value: 'ai',
                           child: Row(
                             children: [
-                              Icon(Icons.auto_awesome, color: AppColors.primary),
+                              Icon(Icons.auto_awesome, color: AppColors.secondary),
                               SizedBox(width: 8),
                               Text('Identificar con IA'),
                             ],
