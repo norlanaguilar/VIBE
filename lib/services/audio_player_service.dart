@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path_provider/path_provider.dart';
@@ -113,23 +115,29 @@ class AudioPlayerService extends ChangeNotifier {
 
     _player.processingStateStream.listen((state) {
       if (state == ProcessingState.completed) {
-        skipNext();
+        if (_loopMode == LoopMode.one && _currentSong != null) {
+          playSong(_currentSong!);
+        } else {
+          skipNext();
+        }
       }
     });
   }
 
-  /// Escanear directorio de documentos (iOS Archivos / Android) de forma recursiva
+  /// Escanear directorio de documentos e integrar caché guardado en disco
   Future<void> scanLocalLibrary() async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
 
-      // Crear README.md directamente en el directorio principal
       final readmeFile = File(path.join(appDir.path, 'README.md'));
       if (!await readmeFile.exists()) {
         await readmeFile.writeAsString(
           '# Carpeta de Música VibeLocal\n\nColoca tus canciones (.mp3, .m4a, .wav, .flac) aquí desde la app Archivos de iOS o tu explorador.',
         );
       }
+
+      // Cargar caché guardado en disco para preservar cambios manuales y carátulas
+      final metadataCache = await _loadMetadataCache();
 
       List<Song> loadedSongs = [];
       Set<String> scannedPaths = {};
@@ -143,14 +151,20 @@ class AudioPlayerService extends ChangeNotifier {
             if (ext == '.m4a' || ext == '.mp3' || ext == '.webm' || ext == '.wav' || ext == '.aac' || ext == '.flac' || ext == '.ogg') {
               final fileName = path.basenameWithoutExtension(entity.path);
 
-              Song song = Song(
-                id: entity.path,
-                title: fileName,
-                artist: 'Artista Local',
-                album: 'Biblioteca Local',
-                localAudioPath: entity.path,
-                isDownloaded: true,
-              );
+              Song song;
+              if (metadataCache.containsKey(entity.path)) {
+                // Restaurar carátulas, videos y metadatos editados guardados en disco
+                song = metadataCache[entity.path]!;
+              } else {
+                song = Song(
+                  id: entity.path,
+                  title: fileName,
+                  artist: 'Artista Local',
+                  album: 'Biblioteca Local',
+                  localAudioPath: entity.path,
+                  isDownloaded: true,
+                );
+              }
 
               loadedSongs.add(song);
             }
@@ -158,14 +172,13 @@ class AudioPlayerService extends ChangeNotifier {
         }
       }
 
-      // Actualizar biblioteca de canciones al instante
       _librarySongs = loadedSongs;
       if (_librarySongs.isNotEmpty && _currentSong == null) {
         _currentSong = _librarySongs.first;
       }
       notifyListeners();
 
-      // Leer la duración exacta de cada archivo local en segundo plano
+      // Probar duración exacta en segundo plano si no se ha registrado
       for (int i = 0; i < _librarySongs.length; i++) {
         if (_librarySongs[i].duration == Duration.zero && _librarySongs[i].localAudioPath != null) {
           try {
@@ -183,23 +196,42 @@ class AudioPlayerService extends ChangeNotifier {
         }
       }
 
-      // Procesar etiquetas de IA en segundo plano de forma no bloqueante
-      if (_enableAiTagging) {
-        for (int i = 0; i < _librarySongs.length; i++) {
-          try {
-            final enriched = await AITaggerService.identifyAndEnrich(_librarySongs[i]);
-            _librarySongs[i] = enriched;
-            if (_currentSong?.id == enriched.id) {
-              _currentSong = enriched;
-            }
-            notifyListeners();
-          } catch (e) {
-            print('AI tagging skipped for ${_librarySongs[i].title}: $e');
-          }
+      // Guardar caché persistente
+      await _saveMetadataCache();
+    } catch (e) {
+      print('Error loading local music: $e');
+    }
+  }
+
+  /// Cargar caché persistente en disco (metadata_store.json)
+  Future<Map<String, Song>> _loadMetadataCache() async {
+    final Map<String, Song> cache = {};
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final cacheFile = File(path.join(docDir.path, 'metadata_store.json'));
+      if (await cacheFile.exists()) {
+        final content = await cacheFile.readAsString();
+        final List<dynamic> jsonList = json.decode(content);
+        for (final item in jsonList) {
+          final song = Song.fromJson(item as Map<String, dynamic>);
+          cache[song.id] = song;
         }
       }
     } catch (e) {
-      print('Error loading local music: $e');
+      print('Error loading metadata cache: $e');
+    }
+    return cache;
+  }
+
+  /// Guardar de forma permanente la biblioteca en disco (metadata_store.json)
+  Future<void> _saveMetadataCache() async {
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final cacheFile = File(path.join(docDir.path, 'metadata_store.json'));
+      final jsonList = _librarySongs.map((s) => s.toJson()).toList();
+      await cacheFile.writeAsString(json.encode(jsonList));
+    } catch (e) {
+      print('Error saving metadata cache: $e');
     }
   }
 
@@ -209,6 +241,7 @@ class AudioPlayerService extends ChangeNotifier {
     if (_currentSong == null) {
       _currentSong = song;
     }
+    _saveMetadataCache();
     notifyListeners();
   }
 
@@ -221,6 +254,7 @@ class AudioPlayerService extends ChangeNotifier {
       if (_currentSong?.id == song.id) {
         _currentSong = _librarySongs[index];
       }
+      _saveMetadataCache();
       notifyListeners();
     }
   }
@@ -293,8 +327,16 @@ class AudioPlayerService extends ChangeNotifier {
   void skipNext() {
     if (_librarySongs.isEmpty) return;
     int currentIndex = _librarySongs.indexWhere((s) => s.id == _currentSong?.id);
-    int nextIndex = (currentIndex + 1) % _librarySongs.length;
-    playSong(_librarySongs[nextIndex]);
+    if (_isShuffle && _librarySongs.length > 1) {
+      int randomIndex;
+      do {
+        randomIndex = (DateTime.now().millisecondsSinceEpoch) % _librarySongs.length;
+      } while (randomIndex == currentIndex);
+      playSong(_librarySongs[randomIndex]);
+    } else {
+      int nextIndex = (currentIndex + 1) % _librarySongs.length;
+      playSong(_librarySongs[nextIndex]);
+    }
   }
 
   void skipPrevious() {
@@ -304,12 +346,13 @@ class AudioPlayerService extends ChangeNotifier {
     playSong(_librarySongs[prevIndex]);
   }
 
-  void toggleShuffle() {
+  Future<void> toggleShuffle() async {
     _isShuffle = !_isShuffle;
+    await _player.setShuffleModeEnabled(_isShuffle);
     notifyListeners();
   }
 
-  void toggleRepeat() {
+  Future<void> toggleRepeat() async {
     if (_loopMode == LoopMode.off) {
       _loopMode = LoopMode.all;
     } else if (_loopMode == LoopMode.all) {
@@ -317,7 +360,7 @@ class AudioPlayerService extends ChangeNotifier {
     } else {
       _loopMode = LoopMode.off;
     }
-    _player.setLoopMode(_loopMode);
+    await _player.setLoopMode(_loopMode);
     notifyListeners();
   }
 
@@ -344,7 +387,6 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   void _applyAudioGains() {
-    // Ajustar volumen master proporcional a la ganancia de bandas del ecualizador
     double avgGain = _equalizerGains.reduce((a, b) => a + b) / _equalizerGains.length;
     double volume = (avgGain * 1.2).clamp(0.1, 1.0);
     _player.setVolume(volume);
@@ -363,9 +405,45 @@ class AudioPlayerService extends ChangeNotifier {
       if (_currentSong?.id == song.id) {
         _currentSong = enriched;
       }
+      await _saveMetadataCache();
       notifyListeners();
     }
     return enriched;
+  }
+
+  /// Seleccionar y asignar un Video de la Galería como Carátula (sin audio, en bucle infinito)
+  Future<Song?> setVideoCoverForSong(Song song) async {
+    try {
+      final picker = ImagePicker();
+      final XFile? pickedFile = await picker.pickVideo(source: ImageSource.gallery);
+
+      if (pickedFile != null) {
+        final docDir = await getApplicationDocumentsDirectory();
+        final videoDir = Directory(path.join(docDir.path, 'video_covers'));
+        if (!await videoDir.exists()) {
+          await videoDir.create(recursive: true);
+        }
+
+        final sanitizedId = song.id.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+        final targetPath = path.join(videoDir.path, 'video_$sanitizedId.mp4');
+        await File(pickedFile.path).copy(targetPath);
+
+        final updated = song.copyWith(videoCoverPath: targetPath);
+        final index = _librarySongs.indexWhere((s) => s.id == song.id);
+        if (index != -1) {
+          _librarySongs[index] = updated;
+          if (_currentSong?.id == song.id) {
+            _currentSong = updated;
+          }
+          await _saveMetadataCache();
+          notifyListeners();
+        }
+        return updated;
+      }
+    } catch (e) {
+      print('Error picking video cover: $e');
+    }
+    return null;
   }
 
   /// Editar manualmente Título y Artista y re-identificar carátula oficial automáticamente
@@ -380,6 +458,7 @@ class AudioPlayerService extends ChangeNotifier {
       if (_currentSong?.id == song.id) {
         _currentSong = updated;
       }
+      await _saveMetadataCache();
       notifyListeners();
     }
     final enriched = await runAiIdentificationForSong(updated);

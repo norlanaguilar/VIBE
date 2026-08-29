@@ -3,12 +3,12 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
+import 'package:video_player/video_player.dart';
 import '../models/song_model.dart';
 import '../services/audio_player_service.dart';
 import '../services/lyrics_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
-import '../widgets/glass_container.dart';
 import '../widgets/spectrum_visualizer.dart';
 
 class NowPlayingScreen extends StatelessWidget {
@@ -171,6 +171,18 @@ class NowPlayingScreen extends StatelessWidget {
                             Navigator.of(context).pop();
                           } else if (value == 'edit') {
                             _showEditMetadataDialog(context, audioService, song);
+                          } else if (value == 'lyrics') {
+                            _showLyricsSheet(context, song);
+                          } else if (value == 'video') {
+                            final updated = await audioService.setVideoCoverForSong(song);
+                            if (updated != null && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('🎬 Video asignado como carátula (en bucle y sin audio)'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            }
                           } else if (value == 'ai_tag') {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
@@ -192,12 +204,32 @@ class NowPlayingScreen extends StatelessWidget {
                         },
                         itemBuilder: (context) => [
                           PopupMenuItem(
+                            value: 'lyrics',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.subtitles, color: AppColors.secondary, size: 20),
+                                const SizedBox(width: 12),
+                                Text('📜 Ver Letras Sincronizadas', style: AppTypography.bodySm),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'video',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.video_library, color: AppColors.tertiary, size: 20),
+                                const SizedBox(width: 12),
+                                Text('🎬 Elegir Video de la Galería', style: AppTypography.bodySm),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
                             value: 'edit',
                             child: Row(
                               children: [
                                 const Icon(Icons.edit_note, color: AppColors.primary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('Editar Título y Artista', style: AppTypography.bodySm),
+                                Text('✏️ Editar Título y Artista', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -207,7 +239,7 @@ class NowPlayingScreen extends StatelessWidget {
                               children: [
                                 const Icon(Icons.auto_awesome, color: AppColors.secondary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('Identificar con IA', style: AppTypography.bodySm),
+                                Text('🤖 Identificar con IA', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -217,7 +249,7 @@ class NowPlayingScreen extends StatelessWidget {
                               children: [
                                 const Icon(Icons.equalizer, color: AppColors.primary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('Ir a Ajustes / Ecualizador', style: AppTypography.bodySm),
+                                Text('⚙️ Ecualizador & Ajustes', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -232,12 +264,12 @@ class NowPlayingScreen extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 24.0),
                     child: Column(
                       children: [
-                        const SizedBox(height: 32),
+                        const SizedBox(height: 36),
 
-                        // Album Artwork Card with Neon Glow Shadow
+                        // Album Artwork / Video Cover Card with Neon Glow Shadow
                         Container(
                           width: double.infinity,
-                          constraints: const BoxConstraints(maxHeight: 270),
+                          constraints: const BoxConstraints(maxHeight: 280),
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(24),
                             boxShadow: [
@@ -257,7 +289,7 @@ class NowPlayingScreen extends StatelessWidget {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 28),
+                        const SizedBox(height: 32),
 
                         // Title, Artist, & Favorite Heart Button
                         Row(
@@ -299,7 +331,7 @@ class NowPlayingScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 24),
 
                         // Dynamic Multi-Harmonic Spectrum Visualizer
                         SpectrumVisualizer(
@@ -307,7 +339,7 @@ class NowPlayingScreen extends StatelessWidget {
                           barCount: 36,
                           height: 32,
                         ),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 24),
 
                         // Progress Seek Bar & Timers
                         Column(
@@ -349,7 +381,7 @@ class NowPlayingScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 28),
 
                         // Playback Controls Row
                         Row(
@@ -359,6 +391,7 @@ class NowPlayingScreen extends StatelessWidget {
                               icon: Icon(
                                 Icons.shuffle,
                                 color: audioService.isShuffle ? AppColors.primary : AppColors.onSurfaceVariant,
+                                size: 28,
                               ),
                               onPressed: () => audioService.toggleShuffle(),
                             ),
@@ -366,7 +399,7 @@ class NowPlayingScreen extends StatelessWidget {
                               icon: const Icon(
                                 Icons.skip_previous_rounded,
                                 color: AppColors.onSurface,
-                                size: 36,
+                                size: 40,
                               ),
                               onPressed: () => audioService.skipPrevious(),
                             ),
@@ -374,8 +407,8 @@ class NowPlayingScreen extends StatelessWidget {
                             GestureDetector(
                               onTap: () => audioService.togglePlayPause(),
                               child: Container(
-                                width: 72,
-                                height: 72,
+                                width: 76,
+                                height: 76,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
                                   color: AppColors.primaryContainer.withOpacity(0.4),
@@ -392,7 +425,7 @@ class NowPlayingScreen extends StatelessWidget {
                                   child: Icon(
                                     audioService.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                                     color: AppColors.primary,
-                                    size: 44,
+                                    size: 46,
                                   ),
                                 ),
                               ),
@@ -401,43 +434,25 @@ class NowPlayingScreen extends StatelessWidget {
                               icon: const Icon(
                                 Icons.skip_next_rounded,
                                 color: AppColors.onSurface,
-                                size: 36,
+                                size: 40,
                               ),
                               onPressed: () => audioService.skipNext(),
                             ),
                             IconButton(
                               icon: Icon(
-                                Icons.repeat,
+                                audioService.loopMode == LoopMode.one
+                                    ? Icons.repeat_one
+                                    : Icons.repeat,
                                 color: audioService.loopMode != LoopMode.off
                                     ? AppColors.primary
                                     : AppColors.onSurfaceVariant,
+                                size: 28,
                               ),
                               onPressed: () => audioService.toggleRepeat(),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 24),
-
-                        // Bottom Interactive Lyrics Button
-                        GestureDetector(
-                          onTap: () => _showLyricsSheet(context, song),
-                          child: GlassContainer(
-                            borderRadius: BorderRadius.circular(20),
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.notes, size: 18, color: AppColors.primary),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Ver Letras Sincronizadas',
-                                  style: AppTypography.labelCaps.copyWith(color: Colors.white),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 36),
+                        const SizedBox(height: 48),
                       ],
                     ),
                   ),
@@ -451,7 +466,9 @@ class NowPlayingScreen extends StatelessWidget {
   }
 
   Widget _buildCoverImage(Song song) {
-    if (song.localCoverPath != null && File(song.localCoverPath!).existsSync()) {
+    if (song.videoCoverPath != null && File(song.videoCoverPath!).existsSync()) {
+      return LoopedMutedVideoCoverWidget(videoPath: song.videoCoverPath!);
+    } else if (song.localCoverPath != null && File(song.localCoverPath!).existsSync()) {
       return Image.file(
         File(song.localCoverPath!),
         fit: BoxFit.cover,
@@ -479,6 +496,84 @@ class NowPlayingScreen extends StatelessWidget {
     final minutes = d.inMinutes;
     final seconds = (d.inSeconds % 60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
+  }
+}
+
+class LoopedMutedVideoCoverWidget extends StatefulWidget {
+  final String videoPath;
+  const LoopedMutedVideoCoverWidget({super.key, required this.videoPath});
+
+  @override
+  State<LoopedMutedVideoCoverWidget> createState() => _LoopedMutedVideoCoverWidgetState();
+}
+
+class _LoopedMutedVideoCoverWidgetState extends State<LoopedMutedVideoCoverWidget> {
+  VideoPlayerController? _controller;
+  bool _isInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initVideo();
+  }
+
+  @override
+  void didUpdateWidget(LoopedMutedVideoCoverWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoPath != widget.videoPath) {
+      _controller?.dispose();
+      _initVideo();
+    }
+  }
+
+  Future<void> _initVideo() async {
+    try {
+      final file = File(widget.videoPath);
+      if (await file.exists()) {
+        final controller = VideoPlayerController.file(file);
+        await controller.initialize();
+        await controller.setVolume(0.0); // Muted (sin audio del video)
+        await controller.setLooping(true); // Bucle infinito
+        await controller.play();
+        if (mounted) {
+          setState(() {
+            _controller = controller;
+            _isInitialized = true;
+          });
+        }
+      }
+    } catch (e) {
+      print('Video cover init error: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isInitialized && _controller != null && _controller!.value.isInitialized) {
+      return SizedBox.expand(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          clipBehavior: Clip.hardEdge,
+          child: SizedBox(
+            width: _controller!.value.size.width,
+            height: _controller!.value.size.height,
+            child: VideoPlayer(_controller!),
+          ),
+        ),
+      );
+    }
+    return Container(
+      color: AppColors.surfaceVariant,
+      child: const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
+    );
   }
 }
 
