@@ -6,14 +6,14 @@ import 'package:path/path.dart' as path;
 import '../models/song_model.dart';
 
 class AITaggerService {
-  /// Clean up common filename noise, underscores, and extension for accurate AI matching
+  /// Clean up common filename noise, extensions, and brackets
   static String cleanTitle(String rawTitle) {
     String cleaned = rawTitle;
     cleaned = cleaned.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), ''); // Remove extension
-    cleaned = cleaned.replaceAll(RegExp(r'\([^)]*\)'), ''); // Remove (Official Audio)
+    cleaned = cleaned.replaceAll(RegExp(r'\([^)]*\)'), ''); // Remove (Official Video)
     cleaned = cleaned.replaceAll(RegExp(r'\[[^\]]*\]'), ''); // Remove [MV]
-    cleaned = cleaned.replaceAll(RegExp(r'[_]+'), ' '); // Replace underscores with spaces
-    cleaned = cleaned.replaceAll(RegExp(r'[-]+'), ' '); // Replace hyphens with spaces
+    cleaned = cleaned.replaceAll(RegExp(r'[_]+'), ' '); // Replace underscores
+    cleaned = cleaned.replaceAll(RegExp(r'[-]+'), ' '); // Replace hyphens
     cleaned = cleaned.replaceAll(
       RegExp(r'(official video|official audio|lyric video|hd|4k|remastered|audio|video|mp3|m4a|wav)', caseSensitive: false),
       '',
@@ -25,31 +25,48 @@ class AITaggerService {
   /// AI Auto-Identify Song & Fetch Metadata + High-Res Album Cover Art
   static Future<Song> identifyAndEnrich(Song song) async {
     try {
-      final query = cleanTitle(song.title.isNotEmpty ? song.title : song.artist);
-      if (query.isEmpty) return song;
+      final cleanArtist = cleanTitle(song.artist == 'Artista Local' ? '' : song.artist);
+      final cleanTrack = cleanTitle(song.title);
 
-      final url = Uri.parse('https://itunes.apple.com/search?term=${Uri.encodeComponent(query)}&entity=song&limit=1');
-      final response = await http.get(url).timeout(const Duration(seconds: 8));
+      if (cleanTrack.isEmpty) return song;
+
+      // Combinar Artista + Nombre de canción para evitar búsquedas ambiguas o erróneas
+      final String searchTerms = cleanArtist.isNotEmpty ? '$cleanArtist $cleanTrack' : cleanTrack;
+
+      final url = Uri.parse('https://itunes.apple.com/search?term=${Uri.encodeComponent(searchTerms)}&entity=song&limit=10');
+      final response = await http.get(url).timeout(const Duration(seconds: 6));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final results = data['results'] as List<dynamic>?;
 
         if (results != null && results.isNotEmpty) {
-          final first = results[0];
-          final trackName = first['trackName'] as String? ?? song.title;
-          final artistName = first['artistName'] as String? ?? song.artist;
-          final collectionName = first['collectionName'] as String? ?? song.album;
-          final primaryGenreName = first['primaryGenreName'] as String?;
-          final releaseDateStr = first['releaseDate'] as String?;
+          // Buscar la coincidencia más precisa entre los resultados
+          dynamic bestMatch = results.first;
+          if (cleanArtist.isNotEmpty) {
+            final artistQuery = cleanArtist.toLowerCase();
+            for (final item in results) {
+              final resultArtist = (item['artistName'] as String? ?? '').toLowerCase();
+              if (resultArtist.contains(artistQuery) || artistQuery.contains(resultArtist)) {
+                bestMatch = item;
+                break;
+              }
+            }
+          }
+
+          final trackName = bestMatch['trackName'] as String? ?? song.title;
+          final artistName = bestMatch['artistName'] as String? ?? song.artist;
+          final collectionName = bestMatch['collectionName'] as String? ?? song.album;
+          final primaryGenreName = bestMatch['primaryGenreName'] as String?;
+          final releaseDateStr = bestMatch['releaseDate'] as String?;
 
           String? yearStr;
           if (releaseDateStr != null && releaseDateStr.length >= 4) {
             yearStr = releaseDateStr.substring(0, 4);
           }
 
-          // Get High Resolution Album Art (600x600bb)
-          String? rawCoverUrl = first['artworkUrl100'] as String?;
+          // Portada en alta resolución (600x600bb)
+          String? rawCoverUrl = bestMatch['artworkUrl100'] as String?;
           String? highResCoverUrl;
           String? localCoverPath;
 

@@ -5,6 +5,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 import '../models/song_model.dart';
 import '../services/audio_player_service.dart';
+import '../services/lyrics_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
 import '../widgets/glass_container.dart';
@@ -98,87 +99,12 @@ class NowPlayingScreen extends StatelessWidget {
     );
   }
 
-  /// Modal limpia para mostrar las letras directamente
   void _showLyricsSheet(BuildContext context, Song song) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (context) {
-        return Container(
-          height: MediaQuery.of(context).size.height * 0.70,
-          decoration: const BoxDecoration(
-            color: AppColors.surfaceContainerLow,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-          ),
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.outlineVariant,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          song.title,
-                          style: AppTypography.headlineSm.copyWith(color: Colors.white, fontSize: 18),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          song.artist,
-                          style: AppTypography.bodySm.copyWith(color: AppColors.secondary),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: AppColors.onSurfaceVariant),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const Divider(color: AppColors.outlineVariant),
-              const SizedBox(height: 16),
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Text(
-                    '🎵 Letra de la canción:\n\n'
-                    'Siente cada nota resonar en tus sentidos...\n'
-                    'Disfruta la melodía con la más alta resolución de audio.\n\n'
-                    'La armonía perfecta acompaña tus momentos,\n'
-                    'cada compás fluye en sintonía con tu energía.\n\n'
-                    'Escucha, siente y vive la música sin pausas.\n\n'
-                    '♪♫♬♪♫♬♪♫♬♪♫♬♪♫♬♪♫♬',
-                    style: AppTypography.bodyLg.copyWith(
-                      color: AppColors.onSurface,
-                      height: 2.0,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (context) => RealSyncedLyricsModal(song: song),
     );
   }
 
@@ -504,7 +430,7 @@ class NowPlayingScreen extends StatelessWidget {
                                 const Icon(Icons.notes, size: 18, color: AppColors.primary),
                                 const SizedBox(width: 8),
                                 Text(
-                                  'Ver Letras',
+                                  'Ver Letras Sincronizadas',
                                   style: AppTypography.labelCaps.copyWith(color: Colors.white),
                                 ),
                               ],
@@ -553,5 +479,165 @@ class NowPlayingScreen extends StatelessWidget {
     final minutes = d.inMinutes;
     final seconds = (d.inSeconds % 60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
+  }
+}
+
+class RealSyncedLyricsModal extends StatefulWidget {
+  final Song song;
+  const RealSyncedLyricsModal({super.key, required this.song});
+
+  @override
+  State<RealSyncedLyricsModal> createState() => _RealSyncedLyricsModalState();
+}
+
+class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
+  bool _isLoading = true;
+  LyricsResult _lyricsResult = LyricsResult.empty();
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLyrics();
+  }
+
+  Future<void> _loadLyrics() async {
+    final result = await LyricsService.fetchLyrics(widget.song.artist, widget.song.title);
+    if (mounted) {
+      setState(() {
+        _lyricsResult = result;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final audioService = Provider.of<AudioPlayerService>(context);
+    final currentPos = audioService.position;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.75,
+      decoration: const BoxDecoration(
+        color: AppColors.surfaceContainerLow,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+      ),
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.song.title,
+                      style: AppTypography.headlineSm.copyWith(color: Colors.white, fontSize: 18),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      widget.song.artist,
+                      style: AppTypography.bodySm.copyWith(color: AppColors.secondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, color: AppColors.onSurfaceVariant),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(color: AppColors.outlineVariant),
+          const SizedBox(height: 12),
+          Expanded(
+            child: _isLoading
+                ? const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircularProgressIndicator(color: AppColors.primary),
+                        SizedBox(height: 16),
+                        Text('Buscando letras en tiempo real...', style: TextStyle(color: Colors.white70)),
+                      ],
+                    ),
+                  )
+                : !_lyricsResult.hasLyrics
+                    ? Center(
+                        child: Text(
+                          'No se encontraron letras disponibles para esta canción.',
+                          style: AppTypography.bodyLg.copyWith(color: AppColors.onSurfaceVariant),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    : _lyricsResult.isSynced
+                        ? ListView.builder(
+                            controller: _scrollController,
+                            itemCount: _lyricsResult.syncedLines.length,
+                            itemBuilder: (context, index) {
+                              final line = _lyricsResult.syncedLines[index];
+                              final isCurrent = index < _lyricsResult.syncedLines.length - 1
+                                  ? (currentPos >= line.timestamp && currentPos < _lyricsResult.syncedLines[index + 1].timestamp)
+                                  : currentPos >= line.timestamp;
+
+                              return GestureDetector(
+                                onTap: () => audioService.seek(line.timestamp),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 10.0),
+                                  child: AnimatedDefaultTextStyle(
+                                    duration: const Duration(milliseconds: 200),
+                                    style: TextStyle(
+                                      color: isCurrent ? AppColors.primary : Colors.white.withOpacity(0.5),
+                                      fontSize: isCurrent ? 20 : 16,
+                                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                                      height: 1.4,
+                                    ),
+                                    child: Text(
+                                      line.text,
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          )
+                        : SingleChildScrollView(
+                            child: Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Text(
+                                _lyricsResult.plainLyrics,
+                                style: AppTypography.bodyLg.copyWith(color: Colors.white, height: 1.8),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+          ),
+        ],
+      ),
+    );
   }
 }
