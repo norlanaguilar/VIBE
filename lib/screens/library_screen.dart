@@ -5,6 +5,7 @@ import '../models/song_model.dart';
 import '../services/audio_player_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
+import '../widgets/add_to_playlist_dialog.dart';
 import '../widgets/glass_container.dart';
 
 class LibraryScreen extends StatefulWidget {
@@ -702,7 +703,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       ),
                       color: AppColors.surfaceContainerHigh,
                       onSelected: (val) {
-                        if (val == 'edit') {
+                        if (val == 'playlist') {
+                          showAddToPlaylistModal(context, audioService, song);
+                        } else if (val == 'edit') {
                           _showEditMetadataDialog(context, audioService, song);
                         } else if (val == 'ai') {
                           audioService.runAiIdentificationForSong(song);
@@ -717,11 +720,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         }
                       },
                       itemBuilder: (context) => [
-                        PopupMenuItem(
-                          value: 'edit',
-                          child: const Row(
+                        const PopupMenuItem(
+                          value: 'playlist',
+                          child: Row(
                             children: [
-                              Icon(Icons.edit_note, color: AppColors.primary),
+                              Icon(Icons.playlist_add, color: AppColors.primary),
+                              SizedBox(width: 8),
+                              Text('Agregar a Playlist'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit_note, color: AppColors.secondary),
                               SizedBox(width: 8),
                               Text('Editar Título y Artista'),
                             ],

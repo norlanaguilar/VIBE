@@ -64,13 +64,89 @@ class AudioPlayerService extends ChangeNotifier {
     return map;
   }
 
-  /// Playlists configuradas automáticamente
+  Map<String, List<String>> _userPlaylists = {};
+  Map<String, List<String>> get userPlaylists => _userPlaylists;
+  List<String> get playlistNames => _userPlaylists.keys.toList();
+
+  /// Playlists combinadas (Automáticas + Personalizadas del usuario)
   Map<String, List<Song>> get playlists {
-    return {
+    final Map<String, List<Song>> result = {
       'Mis Favoritas ❤️': likedSongs,
       'Agregadas Recientemente 🕒': _librarySongs.take(10).toList(),
       'Música Local 📁': _librarySongs,
     };
+
+    _userPlaylists.forEach((name, songIds) {
+      final songsInPlaylist = _librarySongs.where((s) => songIds.contains(s.id)).toList();
+      result['🎵 $name'] = songsInPlaylist;
+    });
+
+    return result;
+  }
+
+  Future<void> createPlaylist(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isNotEmpty && !_userPlaylists.containsKey(trimmed)) {
+      _userPlaylists[trimmed] = [];
+      await _savePlaylistsCache();
+      notifyListeners();
+    }
+  }
+
+  Future<void> addSongToPlaylist(String playlistName, Song song) async {
+    if (_userPlaylists.containsKey(playlistName)) {
+      if (!_userPlaylists[playlistName]!.contains(song.id)) {
+        _userPlaylists[playlistName]!.add(song.id);
+        await _savePlaylistsCache();
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> removeSongFromPlaylist(String playlistName, Song song) async {
+    if (_userPlaylists.containsKey(playlistName)) {
+      _userPlaylists[playlistName]!.remove(song.id);
+      await _savePlaylistsCache();
+      notifyListeners();
+    }
+  }
+
+  Future<void> deletePlaylist(String playlistName) async {
+    if (_userPlaylists.containsKey(playlistName)) {
+      _userPlaylists.remove(playlistName);
+      await _savePlaylistsCache();
+      notifyListeners();
+    }
+  }
+
+  Future<Map<String, List<String>>> _loadPlaylistsCache() async {
+    final Map<String, List<String>> cache = {};
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final cacheFile = File(path.join(docDir.path, 'user_playlists.json'));
+      if (await cacheFile.exists()) {
+        final content = await cacheFile.readAsString();
+        final Map<String, dynamic> rawMap = json.decode(content);
+        rawMap.forEach((key, val) {
+          if (val is List) {
+            cache[key] = val.map((e) => e.toString()).toList();
+          }
+        });
+      }
+    } catch (e) {
+      print('Error loading user playlists: $e');
+    }
+    return cache;
+  }
+
+  Future<void> _savePlaylistsCache() async {
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final cacheFile = File(path.join(docDir.path, 'user_playlists.json'));
+      await cacheFile.writeAsString(json.encode(_userPlaylists));
+    } catch (e) {
+      print('Error saving user playlists: $e');
+    }
   }
 
   // Equalizer Presets & Bands: 60Hz, 230Hz, 910Hz, 4kHz, 14kHz (range 0.0 - 1.0)
@@ -138,6 +214,7 @@ class AudioPlayerService extends ChangeNotifier {
 
       // Cargar caché guardado en disco para preservar cambios manuales y carátulas
       final metadataCache = await _loadMetadataCache();
+      _userPlaylists = await _loadPlaylistsCache();
 
       List<Song> loadedSongs = [];
       Set<String> scannedPaths = {};

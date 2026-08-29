@@ -9,6 +9,7 @@ import '../services/audio_player_service.dart';
 import '../services/lyrics_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_typography.dart';
+import '../widgets/add_to_playlist_dialog.dart';
 import '../widgets/spectrum_visualizer.dart';
 
 class NowPlayingScreen extends StatelessWidget {
@@ -169,6 +170,8 @@ class NowPlayingScreen extends StatelessWidget {
                         onSelected: (value) async {
                           if (value == 'settings') {
                             Navigator.of(context).pop();
+                          } else if (value == 'playlist') {
+                            showAddToPlaylistModal(context, audioService, song);
                           } else if (value == 'edit') {
                             _showEditMetadataDialog(context, audioService, song);
                           } else if (value == 'lyrics') {
@@ -203,6 +206,16 @@ class NowPlayingScreen extends StatelessWidget {
                           }
                         },
                         itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'playlist',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.playlist_add, color: AppColors.primary, size: 20),
+                                const SizedBox(width: 12),
+                                Text('➕ Agregar a Playlist', style: AppTypography.bodySm),
+                              ],
+                            ),
+                          ),
                           PopupMenuItem(
                             value: 'lyrics',
                             child: Row(
