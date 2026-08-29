@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import '../models/song_model.dart';
@@ -176,11 +177,35 @@ class AudioPlayerService extends ChangeNotifier {
     notifyListeners();
 
     try {
+      Uri? coverUri;
+      if (song.localCoverPath != null && await File(song.localCoverPath!).exists()) {
+        coverUri = Uri.file(song.localCoverPath!);
+      } else if (song.coverUrl != null && song.coverUrl!.startsWith('http')) {
+        coverUri = Uri.parse(song.coverUrl!);
+      }
+
+      final mediaItem = MediaItem(
+        id: song.id,
+        album: song.album,
+        title: song.title,
+        artist: song.artist,
+        artUri: coverUri,
+        duration: song.duration,
+      );
+
       if (song.localAudioPath != null && await File(song.localAudioPath!).exists()) {
-        await _player.setFilePath(song.localAudioPath!);
+        final audioSource = AudioSource.uri(
+          Uri.file(song.localAudioPath!),
+          tag: mediaItem,
+        );
+        await _player.setAudioSource(audioSource);
         await _player.play();
       } else if (song.audioUrl != null) {
-        await _player.setUrl(song.audioUrl!);
+        final audioSource = AudioSource.uri(
+          Uri.parse(song.audioUrl!),
+          tag: mediaItem,
+        );
+        await _player.setAudioSource(audioSource);
         await _player.play();
       }
     } catch (e) {

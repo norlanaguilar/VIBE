@@ -26,8 +26,23 @@ class _SpectrumVisualizerState extends State<SpectrumVisualizer> with SingleTick
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat(reverse: true);
+      duration: const Duration(milliseconds: 800),
+    );
+    if (widget.isPlaying) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(SpectrumVisualizer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isPlaying != oldWidget.isPlaying) {
+      if (widget.isPlaying) {
+        _controller.repeat();
+      } else {
+        _controller.stop();
+      }
+    }
   }
 
   @override
@@ -41,33 +56,57 @@ class _SpectrumVisualizerState extends State<SpectrumVisualizer> with SingleTick
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
+        final t = _controller.value * 2 * pi;
         return SizedBox(
           height: widget.height,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: List.generate(widget.barCount, (index) {
-              double factor = widget.isPlaying
-                  ? sin((_controller.value * 2 * pi) + (index * 0.3)).abs()
-                  : 0.15;
+              double factor;
+              if (widget.isPlaying) {
+                // Multi-harmonic audio frequency simulation
+                double freq1 = sin(t * 3.0 + index * 0.45);
+                double freq2 = cos(t * 5.0 - index * 0.25);
+                double freq3 = sin(t * 7.5 + index * 0.85);
+                
+                // Bass boost curve towards center/sides
+                double envelope = 0.5 + 0.5 * sin((index / widget.barCount) * pi);
+                
+                factor = ((freq1 + freq2 + freq3) / 3.0).abs() * envelope;
+                factor = factor.clamp(0.12, 1.0);
+              } else {
+                factor = 0.12;
+              }
+
               double minHeight = 4.0;
-              double maxHeight = widget.height * 0.85;
+              double maxHeight = widget.height * 0.90;
               double currentHeight = minHeight + (maxHeight - minHeight) * factor;
 
               Color barColor = AppColors.primary;
-              if (index % 3 == 0) {
+              if (index % 4 == 0) {
                 barColor = AppColors.secondary;
-              } else if (index % 5 == 0) {
+              } else if (index % 3 == 0) {
                 barColor = AppColors.tertiary;
               }
 
-              return Container(
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 50),
                 margin: const EdgeInsets.symmetric(horizontal: 1.5),
                 width: 3.5,
                 height: currentHeight,
                 decoration: BoxDecoration(
-                  color: barColor.withOpacity(0.85),
+                  color: barColor.withOpacity(widget.isPlaying ? 0.90 : 0.40),
                   borderRadius: BorderRadius.circular(2),
+                  boxShadow: widget.isPlaying
+                      ? [
+                          BoxShadow(
+                            color: barColor.withOpacity(0.35),
+                            blurRadius: 4,
+                            spreadRadius: 0.5,
+                          ),
+                        ]
+                      : [],
                 ),
               );
             }),

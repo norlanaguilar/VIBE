@@ -13,6 +13,86 @@ import '../widgets/spectrum_visualizer.dart';
 class NowPlayingScreen extends StatelessWidget {
   const NowPlayingScreen({super.key});
 
+  void _showLyricsSheet(BuildContext context, Song song) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.65,
+          decoration: const BoxDecoration(
+            color: AppColors.surfaceContainerLow,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+          ),
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Letras & Detalles',
+                    style: AppTypography.headlineSm.copyWith(color: AppColors.primary),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: AppColors.onSurfaceVariant),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '${song.title} - ${song.artist}',
+                style: AppTypography.bodyLg.copyWith(fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              if (song.genre != null || song.year != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4.0),
+                  child: Text(
+                    'Género: ${song.genre ?? "Desconocido"} • Año: ${song.year ?? "N/A"}',
+                    style: AppTypography.bodySm.copyWith(color: AppColors.secondary),
+                  ),
+                ),
+              const SizedBox(height: 20),
+              const Divider(color: AppColors.outlineVariant),
+              const SizedBox(height: 12),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Text(
+                    '🎵 [Letra Sincronizada VibeLocal]\n\n'
+                    'Siente el ritmo de la música...\n'
+                    'Disfruta de una experiencia envolvente en alta fidelidad.\n\n'
+                    'Dispositivo: Vibe Player Engine\n'
+                    'Álbum: ${song.album}\n'
+                    'Formato: ${song.localAudioPath != null ? song.localAudioPath!.split('.').last.toUpperCase() : "M4A/MP3"}\n\n'
+                    '♪♫♬♪♫♬♪♫♬♪♫♬♪♫♬♪♫♬',
+                    style: AppTypography.bodyLg.copyWith(
+                      color: AppColors.onSurface,
+                      height: 1.8,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final audioService = Provider.of<AudioPlayerService>(context);
@@ -50,14 +130,14 @@ class NowPlayingScreen extends StatelessWidget {
           SafeArea(
             child: Column(
               children: [
-                // Top Header Bar (Ajustado con espacio superior adecuado)
+                // Top Header Bar (Bajado adecuadamente con espacio superior generoso)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16.0, 20.0, 16.0, 8.0),
+                  padding: const EdgeInsets.fromLTRB(16.0, 36.0, 16.0, 8.0),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary, size: 30),
+                        icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary, size: 32),
                         onPressed: () => Navigator.of(context).pop(),
                       ),
                       Text(
@@ -67,9 +147,54 @@ class NowPlayingScreen extends StatelessWidget {
                           fontSize: 18,
                         ),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.more_vert, color: AppColors.onSurfaceVariant),
-                        onPressed: () {},
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.settings_suggest, color: AppColors.primary, size: 26),
+                        color: AppColors.surfaceContainerHigh,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        onSelected: (value) async {
+                          if (value == 'settings') {
+                            Navigator.of(context).pop();
+                          } else if (value == 'ai_tag') {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('🤖 Identificando canción con IA...'),
+                                backgroundColor: AppColors.primaryContainer,
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+                            final updated = await audioService.runAiIdentificationForSong(song);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('¡Identificada!: ${updated?.title} - ${updated?.artist}'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'ai_tag',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.auto_awesome, color: AppColors.secondary, size: 20),
+                                const SizedBox(width: 12),
+                                Text('Identificar con IA', style: AppTypography.bodySm),
+                              ],
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'settings',
+                            child: Row(
+                              children: [
+                                const Icon(Icons.equalizer, color: AppColors.primary, size: 20),
+                                const SizedBox(width: 12),
+                                Text('Ir a Ajustes / Ecualizador', style: AppTypography.bodySm),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -80,13 +205,13 @@ class NowPlayingScreen extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 24.0),
                     child: Column(
                       children: [
-                        // Espacio superior para bajar el diseño
-                        const SizedBox(height: 24),
+                        // Espacio superior para bajar el diseño holgadamente
+                        const SizedBox(height: 32),
 
                         // Album Artwork Card with Neon Glow Shadow
                         Container(
                           width: double.infinity,
-                          constraints: const BoxConstraints(maxHeight: 280),
+                          constraints: const BoxConstraints(maxHeight: 270),
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(24),
                             boxShadow: [
@@ -150,11 +275,11 @@ class NowPlayingScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 20),
 
-                        // Spectrum Animated Visualizer
+                        // Dynamic Multi-Harmonic Spectrum Visualizer
                         SpectrumVisualizer(
                           isPlaying: audioService.isPlaying,
                           barCount: 36,
-                          height: 28,
+                          height: 32,
                         ),
                         const SizedBox(height: 20),
 
@@ -260,30 +385,33 @@ class NowPlayingScreen extends StatelessWidget {
                                 color: audioService.loopMode != LoopMode.off
                                     ? AppColors.primary
                                     : AppColors.onSurfaceVariant,
-                               ),
+                              ),
                               onPressed: () => audioService.toggleRepeat(),
                             ),
                           ],
                         ),
                         const SizedBox(height: 24),
 
-                        // Bottom Lyrics Button
-                        GlassContainer(
-                          borderRadius: BorderRadius.circular(20),
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.notes, size: 16, color: AppColors.onSurface),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Lyrics',
-                                style: AppTypography.labelCaps.copyWith(color: AppColors.onSurface),
-                              ),
-                            ],
+                        // Bottom Interactive Lyrics Button
+                        GestureDetector(
+                          onTap: () => _showLyricsSheet(context, song),
+                          child: GlassContainer(
+                            borderRadius: BorderRadius.circular(20),
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.notes, size: 18, color: AppColors.primary),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Ver Letras y Detalles',
+                                  style: AppTypography.labelCaps.copyWith(color: Colors.white),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 32),
+                        const SizedBox(height: 36),
                       ],
                     ),
                   ),

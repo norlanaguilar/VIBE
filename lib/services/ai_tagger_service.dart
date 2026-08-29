@@ -6,15 +6,18 @@ import 'package:path/path.dart' as path;
 import '../models/song_model.dart';
 
 class AITaggerService {
-  /// Clean up common YouTube title noise for accurate AI song metadata matching
+  /// Clean up common filename noise, underscores, and extension for accurate AI matching
   static String cleanTitle(String rawTitle) {
     String cleaned = rawTitle;
-    // Remove bracketed text like (Official Video), [MV], (Audio), etc.
-    cleaned = cleaned.replaceAll(RegExp(r'\([^)]*\)'), '');
-    cleaned = cleaned.replaceAll(RegExp(r'\[[^\]]*\]'), '');
-    // Remove keywords
-    cleaned = cleaned.replaceAll(RegExp(r'(official video|official audio|lyric video|hd|4k|remastered)', caseSensitive: false), '');
-    // Replace multiple spaces with a single space
+    cleaned = cleaned.replaceAll(RegExp(r'\.[a-zA-Z0-9]+$'), ''); // Remove extension
+    cleaned = cleaned.replaceAll(RegExp(r'\([^)]*\)'), ''); // Remove (Official Audio)
+    cleaned = cleaned.replaceAll(RegExp(r'\[[^\]]*\]'), ''); // Remove [MV]
+    cleaned = cleaned.replaceAll(RegExp(r'[_]+'), ' '); // Replace underscores with spaces
+    cleaned = cleaned.replaceAll(RegExp(r'[-]+'), ' '); // Replace hyphens with spaces
+    cleaned = cleaned.replaceAll(
+      RegExp(r'(official video|official audio|lyric video|hd|4k|remastered|audio|video|mp3|m4a|wav)', caseSensitive: false),
+      '',
+    );
     cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
     return cleaned;
   }
@@ -39,13 +42,13 @@ class AITaggerService {
           final collectionName = first['collectionName'] as String? ?? song.album;
           final primaryGenreName = first['primaryGenreName'] as String?;
           final releaseDateStr = first['releaseDate'] as String?;
-          
+
           String? yearStr;
           if (releaseDateStr != null && releaseDateStr.length >= 4) {
             yearStr = releaseDateStr.substring(0, 4);
           }
 
-          // Get High Resolution Album Art (replace 100x100bb with 600x600bb)
+          // Get High Resolution Album Art (600x600bb)
           String? rawCoverUrl = first['artworkUrl100'] as String?;
           String? highResCoverUrl;
           String? localCoverPath;
@@ -67,7 +70,6 @@ class AITaggerService {
         }
       }
     } catch (e) {
-      // Fallback silently if offline or API unavailable
       print('AI Tagger identification error: $e');
     }
     return song;
@@ -82,10 +84,11 @@ class AITaggerService {
         await coversDir.create(recursive: true);
       }
 
-      final filePath = path.join(coversDir.path, '$songId.jpg');
+      final sanitizedId = songId.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      final filePath = path.join(coversDir.path, 'cover_$sanitizedId.jpg');
       final file = File(filePath);
 
-      final res = await http.get(Uri.parse(coverUrl));
+      final res = await http.get(Uri.parse(coverUrl)).timeout(const Duration(seconds: 8));
       if (res.statusCode == 200) {
         await file.writeAsBytes(res.bodyBytes);
         return filePath;

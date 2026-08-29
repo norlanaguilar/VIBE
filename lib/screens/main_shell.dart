@@ -116,7 +116,7 @@ class _MainShellState extends State<MainShell> {
           const Positioned(
             left: 0,
             right: 0,
-            bottom: 64, // Positioned right above bottom nav bar
+            bottom: 56, // Ajustado para quedar más pegado a la barra de navegación
             child: MiniPlayerBar(),
           ),
         ],

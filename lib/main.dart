@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:provider/provider.dart';
 import 'services/audio_player_service.dart';
 import 'theme/app_colors.dart';
 import 'screens/splash_screen.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await JustAudioBackground.init(
+    androidNotificationChannelId: 'com.example.vibe_local.audio',
+    androidNotificationChannelName: 'VibeLocal Audio Playback',
+    androidNotificationOngoing: true,
+  );
+
   runApp(
     MultiProvider(
       providers: [
@@ -31,7 +38,6 @@ class VibeLocalApp extends StatelessWidget {
           primary: AppColors.primary,
           secondary: AppColors.secondary,
           surface: AppColors.surface,
-          background: AppColors.background,
           onSurface: AppColors.onSurface,
         ),
         useMaterial3: true,
