@@ -13,7 +13,14 @@ workflows:
           flutter pub get
       - name: Build Flutter iOS Release App
         script: |
-          flutter build ios --release --no-codesign
+          xcodebuild -workspace ios/Runner.xcworkspace \
+                     -scheme Runner \
+                     -configuration Release \
+                     -sdk iphoneos \
+                     CODE_SIGNING_ALLOWED=NO \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_BUILD_SETTINGS=NO \
+                     CODE_SIGN_IDENTITY=""
       - name: Package Runner.app into Vibe.ipa
         script: |
           cd build/ios/iphoneos
