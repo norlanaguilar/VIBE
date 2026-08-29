@@ -337,7 +337,7 @@ class AudioPlayerService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> runAiIdentificationForSong(Song song) async {
+  Future<Song?> runAiIdentificationForSong(Song song) async {
     final enriched = await AITaggerService.identifyAndEnrich(song);
     final index = _librarySongs.indexWhere((s) => s.id == song.id);
     if (index != -1) {
@@ -347,6 +347,7 @@ class AudioPlayerService extends ChangeNotifier {
       }
       notifyListeners();
     }
+    return enriched;
   }
 
   @override
