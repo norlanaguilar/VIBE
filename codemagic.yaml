@@ -17,18 +17,20 @@ workflows:
                      -scheme Runner \
                      -configuration Release \
                      -sdk iphoneos \
+                     -derivedDataPath build/ios \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_BUILD_SETTINGS=NO \
                      CODE_SIGN_IDENTITY=""
       - name: Package Runner.app into Vibe.ipa
         script: |
+          mkdir -p build/ios/iphoneos
+          cp -R build/ios/Build/Products/Release-iphoneos/Runner.app build/ios/iphoneos/
           cd build/ios/iphoneos
           mkdir -p Payload
-          cp -r Runner.app Payload/
+          cp -R Runner.app Payload/
           zip -r Vibe.ipa Payload
-          cp Vibe.ipa ../../..
+          cp Vibe.ipa $CM_BUILD_DIR/
     artifacts:
       - Vibe.ipa
-      - build/ios/iphoneos/*.app
-      - /tmp/xcodebuild_logs/*.log
+      - build/ios/Build/Products/Release-iphoneos/*.app
