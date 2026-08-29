@@ -67,6 +67,36 @@ class SettingsScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 12),
+
+                      // Equalizer Presets Row
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: audioService.availablePresets.map((preset) {
+                            final isSelected = audioService.activePreset == preset;
+                            return Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(
+                                  preset,
+                                  style: TextStyle(
+                                    color: isSelected ? Colors.white : AppColors.onSurfaceVariant,
+                                    fontSize: 12,
+                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                  ),
+                                ),
+                                selected: isSelected,
+                                selectedColor: AppColors.primaryContainer,
+                                backgroundColor: AppColors.surfaceContainerHigh,
+                                onSelected: (_) {
+                                  audioService.applyEqualizerPreset(preset);
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
                       const SizedBox(height: 20),
 
                       // 5 Frequency Equalizer Sliders

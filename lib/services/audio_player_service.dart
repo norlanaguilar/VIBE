@@ -33,8 +33,21 @@ class AudioPlayerService extends ChangeNotifier {
   bool _enableAiTagging = true;
   bool get enableAiTagging => _enableAiTagging;
 
-  // Equalizer gains for 5 bands: 60Hz, 230Hz, 910Hz, 4kHz, 14kHz (range 0.0 - 1.0)
-  List<double> _equalizerGains = [0.70, 0.45, 0.50, 0.65, 0.80];
+  // Equalizer Presets & Bands: 60Hz, 230Hz, 910Hz, 4kHz, 14kHz (range 0.0 - 1.0)
+  String _activePreset = 'Normal';
+  String get activePreset => _activePreset;
+
+  final Map<String, List<double>> _presets = {
+    'Normal': [0.50, 0.50, 0.50, 0.50, 0.50],
+    'Bajos Potentes': [0.90, 0.80, 0.55, 0.50, 0.45],
+    'Pop / Vocal': [0.45, 0.60, 0.85, 0.70, 0.55],
+    'Rock / Electrónica': [0.85, 0.65, 0.45, 0.75, 0.90],
+    'Acústico': [0.55, 0.55, 0.65, 0.60, 0.50],
+  };
+
+  List<String> get availablePresets => _presets.keys.toList();
+
+  List<double> _equalizerGains = [0.50, 0.50, 0.50, 0.50, 0.50];
   List<double> get equalizerGains => _equalizerGains;
 
   AudioPlayerService() {
@@ -67,63 +80,68 @@ class AudioPlayerService extends ChangeNotifier {
     });
   }
 
-  /// Escanear directorio de documentos (iOS Archivos / Android) y subcarpeta de música
+  /// Escanear directorio de documentos (iOS Archivos / Android) de forma recursiva
   Future<void> scanLocalLibrary() async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      final musicDir = Directory(path.join(appDir.path, 'vibe_music'));
 
-      if (!await musicDir.exists()) {
-        await musicDir.create(recursive: true);
-        final readmeFile = File(path.join(musicDir.path, 'README.md'));
-        if (!await readmeFile.exists()) {
-          await readmeFile.writeAsString(
-            '# Carpeta de Música VibeLocal\n\nColoca aquí tus canciones (.mp3, .m4a, .wav, .flac) desde la app Archivos de iOS.',
-          );
-        }
+      // Crear README.md directamente en el directorio principal
+      final readmeFile = File(path.join(appDir.path, 'README.md'));
+      if (!await readmeFile.exists()) {
+        await readmeFile.writeAsString(
+          '# Carpeta de Música VibeLocal\n\nColoca tus canciones (.mp3, .m4a, .wav, .flac) aquí desde la app Archivos de iOS o tu explorador.',
+        );
       }
-
-      List<Directory> dirsToScan = [appDir, musicDir];
 
       List<Song> loadedSongs = [];
       Set<String> scannedPaths = {};
 
-      for (final dir in dirsToScan) {
-        if (await dir.exists()) {
-          final List<FileSystemEntity> files = dir.listSync();
-          for (final entity in files) {
-            if (entity is File && !scannedPaths.contains(entity.path)) {
-              scannedPaths.add(entity.path);
-              final ext = path.extension(entity.path).toLowerCase();
-              if (ext == '.m4a' || ext == '.mp3' || ext == '.webm' || ext == '.wav' || ext == '.aac' || ext == '.flac') {
-                final fileName = path.basenameWithoutExtension(entity.path);
+      if (await appDir.exists()) {
+        final List<FileSystemEntity> entities = appDir.listSync(recursive: true, followLinks: false);
+        for (final entity in entities) {
+          if (entity is File && !scannedPaths.contains(entity.path)) {
+            scannedPaths.add(entity.path);
+            final ext = path.extension(entity.path).toLowerCase();
+            if (ext == '.m4a' || ext == '.mp3' || ext == '.webm' || ext == '.wav' || ext == '.aac' || ext == '.flac' || ext == '.ogg') {
+              final fileName = path.basenameWithoutExtension(entity.path);
 
-                Song song = Song(
-                  id: entity.path,
-                  title: fileName,
-                  artist: 'Artista Local',
-                  album: 'Biblioteca Local',
-                  localAudioPath: entity.path,
-                  isDownloaded: true,
-                );
+              Song song = Song(
+                id: entity.path,
+                title: fileName,
+                artist: 'Artista Local',
+                album: 'Biblioteca Local',
+                localAudioPath: entity.path,
+                isDownloaded: true,
+              );
 
-                // Identificación IA automática opcional
-                if (_enableAiTagging) {
-                  song = await AITaggerService.identifyAndEnrich(song);
-                }
-
-                loadedSongs.add(song);
-              }
+              loadedSongs.add(song);
             }
           }
         }
       }
 
+      // Actualizar biblioteca de canciones al instante
       _librarySongs = loadedSongs;
       if (_librarySongs.isNotEmpty && _currentSong == null) {
         _currentSong = _librarySongs.first;
       }
       notifyListeners();
+
+      // Procesar etiquetas de IA en segundo plano de forma no bloqueante
+      if (_enableAiTagging) {
+        for (int i = 0; i < _librarySongs.length; i++) {
+          try {
+            final enriched = await AITaggerService.identifyAndEnrich(_librarySongs[i]);
+            _librarySongs[i] = enriched;
+            if (_currentSong?.id == enriched.id) {
+              _currentSong = enriched;
+            }
+            notifyListeners();
+          } catch (e) {
+            print('AI tagging skipped for ${_librarySongs[i].title}: $e');
+          }
+        }
+      }
     } catch (e) {
       print('Error loading local music: $e');
     }
@@ -226,13 +244,30 @@ class AudioPlayerService extends ChangeNotifier {
   void setEqualizerGain(int index, double gain) {
     if (index >= 0 && index < _equalizerGains.length) {
       _equalizerGains[index] = gain;
+      _activePreset = 'Personalizado';
+      _applyAudioGains();
+      notifyListeners();
+    }
+  }
+
+  void applyEqualizerPreset(String presetName) {
+    if (_presets.containsKey(presetName)) {
+      _activePreset = presetName;
+      _equalizerGains = List.from(_presets[presetName]!);
+      _applyAudioGains();
       notifyListeners();
     }
   }
 
   void resetEqualizer() {
-    _equalizerGains = [0.70, 0.45, 0.50, 0.65, 0.80];
-    notifyListeners();
+    applyEqualizerPreset('Normal');
+  }
+
+  void _applyAudioGains() {
+    // Ajustar volumen master proporcional a la ganancia de bandas del ecualizador
+    double avgGain = _equalizerGains.reduce((a, b) => a + b) / _equalizerGains.length;
+    double volume = (avgGain * 1.2).clamp(0.1, 1.0);
+    _player.setVolume(volume);
   }
 
   void setAiTagging(bool value) {
