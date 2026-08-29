@@ -162,15 +162,15 @@ class SettingsScreen extends StatelessWidget {
                           activeColor: AppColors.primary,
                           contentPadding: EdgeInsets.zero,
                           title: Text(
-                            'Gapless Playback',
+                            'Gapless Playback (Reproducción sin silencios)',
                             style: AppTypography.bodyLg.copyWith(fontSize: 15),
                           ),
                           subtitle: Text(
-                            'Smooth transitions between tracks',
+                            'Transición fluida sin pausas entre canciones',
                             style: AppTypography.bodySm.copyWith(fontSize: 12),
                           ),
-                          value: true,
-                          onChanged: (val) {},
+                          value: audioService.gaplessPlayback,
+                          onChanged: (val) => audioService.setGaplessPlayback(val),
                         ),
                         const Divider(color: AppColors.outlineVariant, height: 24),
 

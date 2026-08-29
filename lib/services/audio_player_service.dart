@@ -34,6 +34,43 @@ class AudioPlayerService extends ChangeNotifier {
   bool _enableAiTagging = true;
   bool get enableAiTagging => _enableAiTagging;
 
+  bool _gaplessPlayback = true;
+  bool get gaplessPlayback => _gaplessPlayback;
+
+  void setGaplessPlayback(bool val) {
+    _gaplessPlayback = val;
+    notifyListeners();
+  }
+
+  /// Grupos de canciones por Artista
+  Map<String, List<Song>> get songsByArtist {
+    final Map<String, List<Song>> map = {};
+    for (final song in _librarySongs) {
+      final artistName = song.artist.isNotEmpty ? song.artist : 'Artista Desconocido';
+      map.putIfAbsent(artistName, () => []).add(song);
+    }
+    return map;
+  }
+
+  /// Grupos de canciones por Álbum
+  Map<String, List<Song>> get songsByAlbum {
+    final Map<String, List<Song>> map = {};
+    for (final song in _librarySongs) {
+      final albumName = song.album.isNotEmpty ? song.album : 'Álbum Desconocido';
+      map.putIfAbsent(albumName, () => []).add(song);
+    }
+    return map;
+  }
+
+  /// Playlists configuradas automáticamente
+  Map<String, List<Song>> get playlists {
+    return {
+      'Mis Favoritas ❤️': likedSongs,
+      'Agregadas Recientemente 🕒': _librarySongs.take(10).toList(),
+      'Música Local 📁': _librarySongs,
+    };
+  }
+
   // Equalizer Presets & Bands: 60Hz, 230Hz, 910Hz, 4kHz, 14kHz (range 0.0 - 1.0)
   String _activePreset = 'Normal';
   String get activePreset => _activePreset;

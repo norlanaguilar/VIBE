@@ -104,46 +104,41 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
               ),
 
-            // Quick Filters (Categories)
+            // Quick Filters (Categories Chips)
             SliverToBoxAdapter(
               child: SizedBox(
-                height: 42,
+                height: 48,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   itemCount: _categories.length,
                   itemBuilder: (context, index) {
                     final cat = _categories[index];
-                    final isSelected = cat == _selectedCategory;
-                    return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _selectedCategory = cat;
-                        });
-                      },
-                      child: Container(
-                        margin: const EdgeInsets.only(right: 10),
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? AppColors.primaryContainer.withOpacity(0.4)
-                              : Colors.transparent,
+                    final isSelected = _selectedCategory == cat;
+
+                    return Container(
+                      margin: const EdgeInsets.only(right: 8.0),
+                      child: ChoiceChip(
+                        label: Text(
+                          cat,
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : AppColors.onSurfaceVariant,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                        selected: isSelected,
+                        selectedColor: AppColors.primaryContainer,
+                        backgroundColor: AppColors.surfaceContainerLow,
+                        shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: isSelected
-                                ? AppColors.primary
-                                : AppColors.outlineVariant.withOpacity(0.4),
-                          ),
                         ),
-                        child: Center(
-                          child: Text(
-                            cat,
-                            style: AppTypography.bodySm.copyWith(
-                              color: isSelected ? AppColors.primary : AppColors.onSurfaceVariant,
-                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                            ),
-                          ),
-                        ),
+                        onSelected: (val) {
+                          if (val) {
+                            setState(() {
+                              _selectedCategory = cat;
+                            });
+                          }
+                        },
                       ),
                     );
                   },
@@ -151,150 +146,71 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
             ),
 
-            // Recently Added Bento Grid Section
-            if (_searchQuery.isEmpty && recentlyAdded.isNotEmpty) ...[
+            // Bento Grid for Recently Added Tracks (Visible in All Files)
+            if (_selectedCategory == 'All Files' && recentlyAdded.isNotEmpty)
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
-                  child: Text(
-                    'Recently Added',
-                    style: AppTypography.headlineSm.copyWith(
-                      color: AppColors.onSurface,
-                    ),
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Container(
-                  height: 220,
-                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                  child: Row(
+                  padding: const EdgeInsets.all(20.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Featured Large Bento Card
-                      Expanded(
-                        flex: 5,
-                        child: GestureDetector(
-                          onTap: () => audioService.playSong(recentlyAdded.first),
-                          child: GlassContainer(
-                            borderRadius: BorderRadius.circular(16),
-                            padding: const EdgeInsets.all(0),
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: _buildCoverImage(recentlyAdded.first),
-                                ),
-                                Positioned.fill(
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topCenter,
-                                        end: Alignment.bottomCenter,
-                                        colors: [
-                                          Colors.transparent,
-                                          AppColors.background.withOpacity(0.85),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                Positioned(
-                                  bottom: 12,
-                                  left: 12,
-                                  right: 12,
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              recentlyAdded.first.title,
-                                              style: AppTypography.headlineSm.copyWith(
-                                                fontSize: 16,
-                                                color: Colors.white,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            Text(
-                                              recentlyAdded.first.artist,
-                                              style: AppTypography.bodySm.copyWith(
-                                                fontSize: 12,
-                                                color: AppColors.onSurfaceVariant,
-                                              ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      CircleAvatar(
-                                        backgroundColor: AppColors.primary,
-                                        radius: 18,
-                                        child: const Icon(
-                                          Icons.play_arrow,
-                                          color: AppColors.onPrimary,
-                                          size: 22,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                      Text(
+                        'Recently Added',
+                        style: AppTypography.headlineSm.copyWith(
+                          fontSize: 18,
+                          color: AppColors.onSurface,
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(height: 12),
 
-                      // Smaller Bento Cards Column
-                      if (recentlyAdded.length > 1)
-                        Expanded(
-                          flex: 4,
-                          child: Column(
-                            children: List.generate(
-                              (recentlyAdded.length - 1).clamp(0, 2),
-                              (idx) {
-                                final song = recentlyAdded[idx + 1];
-                                return Expanded(
-                                  child: GestureDetector(
-                                    onTap: () => audioService.playSong(song),
-                                    child: Container(
-                                      margin: EdgeInsets.only(bottom: idx == 0 ? 8.0 : 0.0),
-                                      child: GlassContainer(
-                                        borderRadius: BorderRadius.circular(12),
-                                        padding: const EdgeInsets.all(8),
+                      SizedBox(
+                        height: 180,
+                        child: Row(
+                          children: [
+                            // Main Large Bento Feature Card
+                            Expanded(
+                              flex: 5,
+                              child: GestureDetector(
+                                onTap: () => audioService.playSong(recentlyAdded.first),
+                                child: GlassContainer(
+                                  borderRadius: BorderRadius.circular(16),
+                                  padding: const EdgeInsets.all(12),
+                                  child: Stack(
+                                    children: [
+                                      Positioned.fill(
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(12),
+                                          child: Opacity(
+                                            opacity: 0.4,
+                                            child: _buildCoverImage(recentlyAdded.first),
+                                          ),
+                                        ),
+                                      ),
+                                      Positioned(
+                                        bottom: 8,
+                                        left: 8,
+                                        right: 8,
                                         child: Row(
                                           children: [
-                                            ClipRRect(
-                                              borderRadius: BorderRadius.circular(8),
-                                              child: SizedBox(
-                                                width: 44,
-                                                height: 44,
-                                                child: _buildCoverImage(song),
-                                              ),
-                                            ),
-                                            const SizedBox(width: 8),
                                             Expanded(
                                               child: Column(
-                                                mainAxisAlignment: MainAxisAlignment.center,
                                                 crossAxisAlignment: CrossAxisAlignment.start,
+                                                mainAxisSize: MainAxisSize.min,
                                                 children: [
                                                   Text(
-                                                    song.title,
-                                                    style: AppTypography.bodyLg.copyWith(
-                                                      fontSize: 13,
-                                                      fontWeight: FontWeight.w600,
+                                                    recentlyAdded.first.title,
+                                                    style: AppTypography.headlineSm.copyWith(
+                                                      fontSize: 16,
+                                                      color: Colors.white,
                                                     ),
                                                     maxLines: 1,
                                                     overflow: TextOverflow.ellipsis,
                                                   ),
                                                   Text(
-                                                    song.artist,
-                                                    style: AppTypography.monoLabel.copyWith(
-                                                      fontSize: 11,
+                                                    recentlyAdded.first.artist,
+                                                    style: AppTypography.bodySm.copyWith(
+                                                      fontSize: 12,
+                                                      color: AppColors.onSurfaceVariant,
                                                     ),
                                                     maxLines: 1,
                                                     overflow: TextOverflow.ellipsis,
@@ -302,213 +218,464 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                                 ],
                                               ),
                                             ),
+                                            CircleAvatar(
+                                              backgroundColor: AppColors.primary,
+                                              radius: 18,
+                                              child: const Icon(
+                                                Icons.play_arrow,
+                                                color: AppColors.onPrimary,
+                                                size: 22,
+                                              ),
+                                            ),
                                           ],
                                         ),
                                       ),
-                                    ),
+                                    ],
                                   ),
-                                );
-                              },
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 12),
+
+                            // Smaller Bento Cards Column
+                            if (recentlyAdded.length > 1)
+                              Expanded(
+                                flex: 4,
+                                child: Column(
+                                  children: List.generate(
+                                    (recentlyAdded.length - 1).clamp(0, 2),
+                                    (idx) {
+                                      final song = recentlyAdded[idx + 1];
+                                      return Expanded(
+                                        child: GestureDetector(
+                                          onTap: () => audioService.playSong(song),
+                                          child: Container(
+                                            margin: EdgeInsets.only(bottom: idx == 0 ? 8.0 : 0.0),
+                                            child: GlassContainer(
+                                              borderRadius: BorderRadius.circular(12),
+                                              padding: const EdgeInsets.all(8),
+                                              child: Row(
+                                                children: [
+                                                  ClipRRect(
+                                                    borderRadius: BorderRadius.circular(8),
+                                                    child: SizedBox(
+                                                      width: 44,
+                                                      height: 44,
+                                                      child: _buildCoverImage(song),
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                    child: Text(
+                                                      song.title,
+                                                      style: AppTypography.bodySm.copyWith(
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
+                      ),
                     ],
                   ),
                 ),
               ),
-            ],
 
-            // All Local Tracks Header
+            // Header Title for Selected Category
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 28, 20, 12),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'All Local Tracks',
-                      style: AppTypography.headlineSm.copyWith(
-                        color: AppColors.onSurface,
-                      ),
-                    ),
-                    Text(
-                      'SORT BY',
-                      style: AppTypography.labelCaps.copyWith(
-                        color: AppColors.primary,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                child: Text(
+                  _selectedCategory == 'All Files'
+                      ? 'All Local Tracks'
+                      : _selectedCategory,
+                  style: AppTypography.headlineSm.copyWith(
+                    color: AppColors.onSurface,
+                  ),
                 ),
               ),
             ),
 
-            // Local Tracks List
-            songs.isEmpty
-                ? SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(32.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.library_music_outlined, size: 64, color: AppColors.outlineVariant),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No tienes canciones guardadas',
-                              style: AppTypography.headlineSm.copyWith(color: AppColors.onSurface),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Guarda o copia tus archivos de música (.mp3, .m4a, .wav) en la carpeta VibeLocal de la app Archivos en iOS o almacenamiento local.',
-                              style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 20),
-                            ElevatedButton.icon(
-                              onPressed: () => audioService.scanLocalLibrary(),
-                              icon: const Icon(Icons.sync),
-                              label: const Text('Escanear música local'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.primaryContainer,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  )
-                : SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final song = songs[index];
-                        final isCurrent = audioService.currentSong?.id == song.id;
+            // Content Switcher for Categories
+            ..._buildCategoryView(audioService, songs),
 
-                  return Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 4.0),
-                    child: GlassContainer(
-                      borderRadius: BorderRadius.circular(12),
-                      backgroundColor: isCurrent
-                          ? AppColors.primaryContainer.withOpacity(0.2)
-                          : AppColors.surfaceContainerLow.withOpacity(0.6),
-                      padding: const EdgeInsets.all(8.0),
-                      onTap: () => audioService.playSong(song),
-                      child: Row(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: SizedBox(
-                              width: 48,
-                              height: 48,
-                              child: Stack(
-                                children: [
-                                  Positioned.fill(child: _buildCoverImage(song)),
-                                  if (isCurrent && audioService.isPlaying)
-                                    Container(
-                                      color: Colors.black.withOpacity(0.4),
-                                      child: const Center(
-                                        child: Icon(
-                                          Icons.equalizer,
-                                          color: AppColors.primary,
-                                          size: 24,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  song.title,
-                                  style: AppTypography.bodyLg.copyWith(
-                                    fontSize: 15,
-                                    fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
-                                    color: isCurrent ? AppColors.primary : AppColors.onSurface,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${song.artist} • ${_formatDuration(song.duration)}',
-                                  style: AppTypography.bodySm.copyWith(
-                                    fontSize: 12,
-                                    color: AppColors.onSurfaceVariant,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-                          PopupMenuButton<String>(
-                            icon: const Icon(
-                              Icons.more_vert,
-                              color: AppColors.onSurfaceVariant,
-                            ),
-                            color: AppColors.surfaceContainerHigh,
-                            onSelected: (val) {
-                              if (val == 'ai') {
-                                audioService.runAiIdentificationForSong(song);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Identificando metadata con IA...'),
-                                    backgroundColor: AppColors.primaryContainer,
-                                  ),
-                                );
-                              } else if (val == 'like') {
-                                audioService.toggleLike(song);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'like',
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      song.isLiked ? Icons.favorite : Icons.favorite_border,
-                                      color: song.isLiked ? AppColors.secondary : Colors.white,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(song.isLiked ? 'Quitar Me gusta' : 'Agregar Me gusta'),
-                                  ],
-                                ),
-                              ),
-                              const PopupMenuItem(
-                                value: 'ai',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.auto_awesome, color: AppColors.primary),
-                                    SizedBox(width: 8),
-                                    Text('Identificar con IA'),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-                childCount: songs.length,
-              ),
-            ),
             const SliverToBoxAdapter(
               child: SizedBox(height: 100),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Visualizador Dinámico según Categoría Seleccionada
+  List<Widget> _buildCategoryView(AudioPlayerService audioService, List<Song> songs) {
+    if (_selectedCategory == 'Playlists') {
+      final playlists = audioService.playlists;
+      return [
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              final playlistName = playlists.keys.elementAt(index);
+              final playlistSongs = playlists[playlistName] ?? [];
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                child: GlassContainer(
+                  borderRadius: BorderRadius.circular(16),
+                  padding: const EdgeInsets.all(16),
+                  onTap: () {
+                    if (playlistSongs.isNotEmpty) {
+                      audioService.playSong(playlistSongs.first);
+                    }
+                  },
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryContainer.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.playlist_play, color: AppColors.primary, size: 28),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              playlistName,
+                              style: AppTypography.headlineSm.copyWith(fontSize: 16, color: Colors.white),
+                            ),
+                            Text(
+                              '${playlistSongs.length} canciones',
+                              style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.play_circle_fill, color: AppColors.primary, size: 32),
+                    ],
+                  ),
+                ),
+              );
+            },
+            childCount: playlists.length,
+          ),
+        ),
+      ];
+    }
+
+    if (_selectedCategory == 'Artists') {
+      final artistsMap = audioService.songsByArtist;
+      if (artistsMap.isEmpty) {
+        return [_buildEmptySliver('No hay artistas encontrados.')];
+      }
+      return [
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              final artistName = artistsMap.keys.elementAt(index);
+              final artistSongs = artistsMap[artistName] ?? [];
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                child: GlassContainer(
+                  borderRadius: BorderRadius.circular(16),
+                  padding: const EdgeInsets.all(16),
+                  onTap: () {
+                    if (artistSongs.isNotEmpty) {
+                      audioService.playSong(artistSongs.first);
+                    }
+                  },
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 26,
+                        backgroundColor: AppColors.secondaryContainer,
+                        child: const Icon(Icons.person, color: Colors.white, size: 28),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              artistName,
+                              style: AppTypography.headlineSm.copyWith(fontSize: 16, color: Colors.white),
+                            ),
+                            Text(
+                              '${artistSongs.length} canciones grabadas',
+                              style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right, color: AppColors.primary),
+                    ],
+                  ),
+                ),
+              );
+            },
+            childCount: artistsMap.length,
+          ),
+        ),
+      ];
+    }
+
+    if (_selectedCategory == 'Albums') {
+      final albumsMap = audioService.songsByAlbum;
+      if (albumsMap.isEmpty) {
+        return [_buildEmptySliver('No hay álbumes registrados.')];
+      }
+      return [
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              final albumName = albumsMap.keys.elementAt(index);
+              final albumSongs = albumsMap[albumName] ?? [];
+              final firstSong = albumSongs.first;
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                child: GlassContainer(
+                  borderRadius: BorderRadius.circular(16),
+                  padding: const EdgeInsets.all(12),
+                  onTap: () {
+                    if (albumSongs.isNotEmpty) {
+                      audioService.playSong(albumSongs.first);
+                    }
+                  },
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: _buildCoverImage(firstSong),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              albumName,
+                              style: AppTypography.headlineSm.copyWith(fontSize: 15, color: Colors.white),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              '${firstSong.artist} • ${albumSongs.length} pistas',
+                              style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.album_rounded, color: AppColors.secondary),
+                    ],
+                  ),
+                ),
+              );
+            },
+            childCount: albumsMap.length,
+          ),
+        ),
+      ];
+    }
+
+    // Default 'All Files' View
+    if (songs.isEmpty) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.library_music_outlined, size: 64, color: AppColors.outlineVariant),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No tienes canciones guardadas',
+                    style: AppTypography.headlineSm.copyWith(color: AppColors.onSurface),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Guarda o copia tus archivos de música (.mp3, .m4a, .wav) en la carpeta VibeLocal de la app Archivos en iOS o almacenamiento local.',
+                    style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton.icon(
+                    onPressed: () => audioService.scanLocalLibrary(),
+                    icon: const Icon(Icons.sync),
+                    label: const Text('Escanear música local'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryContainer,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ];
+    }
+
+    return [
+      SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final song = songs[index];
+            final isCurrent = audioService.currentSong?.id == song.id;
+
+            return Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 4.0),
+              child: GlassContainer(
+                borderRadius: BorderRadius.circular(12),
+                backgroundColor: isCurrent
+                    ? AppColors.primaryContainer.withOpacity(0.2)
+                    : AppColors.surfaceContainerLow.withOpacity(0.6),
+                padding: const EdgeInsets.all(8.0),
+                onTap: () => audioService.playSong(song),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: Stack(
+                          children: [
+                            Positioned.fill(child: _buildCoverImage(song)),
+                            if (isCurrent && audioService.isPlaying)
+                              Container(
+                                color: Colors.black.withOpacity(0.4),
+                                child: const Center(
+                                  child: Icon(
+                                    Icons.equalizer,
+                                    color: AppColors.primary,
+                                    size: 24,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            song.title,
+                            style: AppTypography.bodyLg.copyWith(
+                              fontSize: 15,
+                              fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
+                              color: isCurrent ? AppColors.primary : AppColors.onSurface,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${song.artist} • ${_formatDuration(song.duration)}',
+                            style: AppTypography.bodySm.copyWith(
+                              fontSize: 12,
+                              color: AppColors.onSurfaceVariant,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(
+                        Icons.more_vert,
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                      color: AppColors.surfaceContainerHigh,
+                      onSelected: (val) {
+                        if (val == 'ai') {
+                          audioService.runAiIdentificationForSong(song);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Identificando metadata con IA...'),
+                              backgroundColor: AppColors.primaryContainer,
+                            ),
+                          );
+                        } else if (val == 'like') {
+                          audioService.toggleLike(song);
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        PopupMenuItem(
+                          value: 'like',
+                          child: Row(
+                            children: [
+                              Icon(
+                                song.isLiked ? Icons.favorite : Icons.favorite_border,
+                                color: song.isLiked ? AppColors.secondary : Colors.white,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(song.isLiked ? 'Quitar Me gusta' : 'Agregar Me gusta'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'ai',
+                          child: Row(
+                            children: [
+                              Icon(Icons.auto_awesome, color: AppColors.primary),
+                              SizedBox(width: 8),
+                              Text('Identificar con IA'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+          childCount: songs.length,
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildEmptySliver(String message) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Center(
+          child: Text(
+            message,
+            style: AppTypography.bodyLg.copyWith(color: AppColors.onSurfaceVariant),
+          ),
         ),
       ),
     );
