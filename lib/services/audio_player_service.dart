@@ -73,10 +73,17 @@ class AudioPlayerService extends ChangeNotifier {
       final appDir = await getApplicationDocumentsDirectory();
       final musicDir = Directory(path.join(appDir.path, 'vibe_music'));
 
-      List<Directory> dirsToScan = [appDir];
-      if (await musicDir.exists()) {
-        dirsToScan.add(musicDir);
+      if (!await musicDir.exists()) {
+        await musicDir.create(recursive: true);
+        final readmeFile = File(path.join(musicDir.path, 'README.md'));
+        if (!await readmeFile.exists()) {
+          await readmeFile.writeAsString(
+            '# Carpeta de Música VibeLocal\n\nColoca aquí tus canciones (.mp3, .m4a, .wav, .flac) desde la app Archivos de iOS.',
+          );
+        }
       }
+
+      List<Directory> dirsToScan = [appDir, musicDir];
 
       List<Song> loadedSongs = [];
       Set<String> scannedPaths = {};
