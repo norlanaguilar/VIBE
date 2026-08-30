@@ -319,6 +319,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     Row(
                       children: [
                         IconButton(
+                          icon: const Icon(Icons.file_open_outlined, color: AppColors.tertiary),
+                          onPressed: () async {
+                            final imported = await audioService.importCustomMusicFile();
+                            if (imported.isNotEmpty && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('¡${imported.length} canciones importadas a la biblioteca!'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            }
+                          },
+                          tooltip: 'Importar archivos de música',
+                        ),
+                        IconButton(
                           icon: const Icon(Icons.sync, color: AppColors.secondary),
                           onPressed: () => audioService.scanLocalLibrary(),
                           tooltip: 'Escanear música local',

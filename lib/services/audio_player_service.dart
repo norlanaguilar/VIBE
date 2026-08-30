@@ -6,6 +6,8 @@ import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
+import 'package:file_picker/file_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models/song_model.dart';
 import 'ai_tagger_service.dart';
 
@@ -212,6 +214,14 @@ class AudioPlayerService extends ChangeNotifier {
         );
       }
 
+      // Solicitar permisos de almacenamiento/audio en Android
+      if (Platform.isAndroid) {
+        try {
+          await Permission.audio.request();
+          await Permission.storage.request();
+        } catch (_) {}
+      }
+
       // Cargar caché guardado en disco para preservar cambios manuales y carátulas
       final metadataCache = await _loadMetadataCache();
       _userPlaylists = await _loadPlaylistsCache();
@@ -224,6 +234,7 @@ class AudioPlayerService extends ChangeNotifier {
         Directory('/storage/emulated/0/Music'),
         Directory('/storage/emulated/0/Download'),
         Directory('/sdcard/Music'),
+        Directory('/sdcard/Download'),
       ];
 
       for (final dir in dirsToScan) {
@@ -568,6 +579,49 @@ class AudioPlayerService extends ChangeNotifier {
     }
     final enriched = await runAiIdentificationForSong(updated);
     return enriched ?? updated;
+  }
+
+  /// Importar canciones manualmente desde el explorador de archivos nativo de Android / iOS
+  Future<List<Song>> importCustomMusicFile() async {
+    List<Song> importedSongs = [];
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['mp3', 'm4a', 'wav', 'flac', 'aac', 'ogg', 'webm'],
+        allowMultiple: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final docDir = await getApplicationDocumentsDirectory();
+        final musicDir = Directory(path.join(docDir.path, 'imported_music'));
+        if (!await musicDir.exists()) {
+          await musicDir.create(recursive: true);
+        }
+
+        for (final file in result.files) {
+          if (file.path != null) {
+            final fileName = path.basename(file.path!);
+            final targetPath = path.join(musicDir.path, fileName);
+            await File(file.path!).copy(targetPath);
+
+            final song = Song(
+              id: targetPath,
+              title: path.basenameWithoutExtension(fileName),
+              artist: 'Artista Local',
+              album: 'Música Importada',
+              localAudioPath: targetPath,
+              isDownloaded: true,
+            );
+
+            addSong(song);
+            importedSongs.add(song);
+          }
+        }
+      }
+    } catch (e) {
+      print('Error importing music file: $e');
+    }
+    return importedSongs;
   }
 
   @override
