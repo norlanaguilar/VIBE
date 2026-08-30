@@ -219,33 +219,43 @@ class AudioPlayerService extends ChangeNotifier {
       List<Song> loadedSongs = [];
       Set<String> scannedPaths = {};
 
-      if (await appDir.exists()) {
-        final List<FileSystemEntity> entities = appDir.listSync(recursive: true, followLinks: false);
-        for (final entity in entities) {
-          if (entity is File && !scannedPaths.contains(entity.path)) {
-            scannedPaths.add(entity.path);
-            final ext = path.extension(entity.path).toLowerCase();
-            if (ext == '.m4a' || ext == '.mp3' || ext == '.webm' || ext == '.wav' || ext == '.aac' || ext == '.flac' || ext == '.ogg') {
-              final fileName = path.basenameWithoutExtension(entity.path);
+      final List<Directory> dirsToScan = [
+        appDir,
+        Directory('/storage/emulated/0/Music'),
+        Directory('/storage/emulated/0/Download'),
+        Directory('/sdcard/Music'),
+      ];
 
-              Song song;
-              if (metadataCache.containsKey(entity.path)) {
-                // Restaurar carátulas, videos y metadatos editados guardados en disco
-                song = metadataCache[entity.path]!;
-              } else {
-                song = Song(
-                  id: entity.path,
-                  title: fileName,
-                  artist: 'Artista Local',
-                  album: 'Biblioteca Local',
-                  localAudioPath: entity.path,
-                  isDownloaded: true,
-                );
+      for (final dir in dirsToScan) {
+        if (await dir.exists()) {
+          try {
+            final List<FileSystemEntity> entities = dir.listSync(recursive: true, followLinks: false);
+            for (final entity in entities) {
+              if (entity is File && !scannedPaths.contains(entity.path)) {
+                scannedPaths.add(entity.path);
+                final ext = path.extension(entity.path).toLowerCase();
+                if (ext == '.m4a' || ext == '.mp3' || ext == '.webm' || ext == '.wav' || ext == '.aac' || ext == '.flac' || ext == '.ogg') {
+                  final fileName = path.basenameWithoutExtension(entity.path);
+
+                  Song song;
+                  if (metadataCache.containsKey(entity.path)) {
+                    song = metadataCache[entity.path]!;
+                  } else {
+                    song = Song(
+                      id: entity.path,
+                      title: fileName,
+                      artist: 'Artista Local',
+                      album: 'Biblioteca Local',
+                      localAudioPath: entity.path,
+                      isDownloaded: true,
+                    );
+                  }
+
+                  loadedSongs.add(song);
+                }
               }
-
-              loadedSongs.add(song);
             }
-          }
+          } catch (_) {}
         }
       }
 
