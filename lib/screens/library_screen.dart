@@ -105,6 +105,187 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
+  void _showPlaylistDetailSheet(
+      BuildContext context, AudioPlayerService audioService, String playlistName, List<Song> playlistSongs) {
+    final cleanName = playlistName.replaceFirst('🎵 ', '');
+    final isCustom = playlistName.startsWith('🎵 ');
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final currentSongs = isCustom
+                ? (audioService.playlists[playlistName] ?? [])
+                : playlistSongs;
+
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.75,
+              decoration: const BoxDecoration(
+                color: AppColors.surfaceContainerLow,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+              ),
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              playlistName,
+                              style: AppTypography.headlineSm.copyWith(color: Colors.white, fontSize: 20),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              '${currentSongs.length} canciones',
+                              style: AppTypography.bodySm.copyWith(color: AppColors.secondary),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: AppColors.onSurfaceVariant),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryContainer,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          icon: const Icon(Icons.play_arrow),
+                          label: const Text('REPRODUCIR PLAYLIST', style: TextStyle(fontWeight: FontWeight.bold)),
+                          onPressed: currentSongs.isEmpty
+                              ? null
+                              : () {
+                                  Navigator.pop(context);
+                                  audioService.playPlaylist(currentSongs, currentSongs.first);
+                                },
+                        ),
+                      ),
+                      if (isCustom) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                          tooltip: 'Eliminar Playlist',
+                          onPressed: () async {
+                            await audioService.deletePlaylist(cleanName);
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Playlist "$cleanName" eliminada')),
+                              );
+                            }
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(color: AppColors.outlineVariant),
+                  const SizedBox(height: 12),
+
+                  Expanded(
+                    child: currentSongs.isEmpty
+                        ? Center(
+                            child: Text(
+                              'Esta playlist no tiene canciones aún.\n¡Usa el botón "Agregar a Playlist" en cualquier canción!',
+                              style: AppTypography.bodyLg.copyWith(color: AppColors.onSurfaceVariant),
+                              textAlign: TextAlign.center,
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: currentSongs.length,
+                            itemBuilder: (context, index) {
+                              final song = currentSongs[index];
+                              final isCurrent = audioService.currentSong?.id == song.id;
+
+                              return Container(
+                                margin: const EdgeInsets.symmetric(vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: isCurrent
+                                      ? AppColors.primaryContainer.withOpacity(0.25)
+                                      : AppColors.surfaceContainerHigh.withOpacity(0.4),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: ListTile(
+                                  leading: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: SizedBox(
+                                      width: 44,
+                                      height: 44,
+                                      child: _buildCoverImage(song),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    song.title,
+                                    style: TextStyle(
+                                      color: isCurrent ? AppColors.primary : Colors.white,
+                                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  subtitle: Text(
+                                    song.artist,
+                                    style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  trailing: isCustom
+                                      ? IconButton(
+                                          icon: const Icon(Icons.remove_circle_outline, color: Colors.redAccent),
+                                          tooltip: 'Eliminar de la playlist',
+                                          onPressed: () async {
+                                            await audioService.removeSongFromPlaylist(cleanName, song);
+                                            setSheetState(() {});
+                                          },
+                                        )
+                                      : null,
+                                  onTap: () {
+                                    audioService.playPlaylist(currentSongs, song);
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final audioService = Provider.of<AudioPlayerService>(context);
@@ -421,9 +602,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   borderRadius: BorderRadius.circular(16),
                   padding: const EdgeInsets.all(16),
                   onTap: () {
-                    if (playlistSongs.isNotEmpty) {
-                      audioService.playSong(playlistSongs.first);
-                    }
+                    _showPlaylistDetailSheet(context, audioService, playlistName, playlistSongs);
                   },
                   child: Row(
                     children: [
@@ -452,7 +631,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           ],
                         ),
                       ),
-                      const Icon(Icons.play_circle_fill, color: AppColors.primary, size: 32),
+                      IconButton(
+                        icon: const Icon(Icons.play_circle_fill, color: AppColors.primary, size: 36),
+                        onPressed: () {
+                          if (playlistSongs.isNotEmpty) {
+                            audioService.playPlaylist(playlistSongs, playlistSongs.first);
+                          }
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -482,7 +668,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   padding: const EdgeInsets.all(16),
                   onTap: () {
                     if (artistSongs.isNotEmpty) {
-                      audioService.playSong(artistSongs.first);
+                      audioService.playPlaylist(artistSongs, artistSongs.first);
                     }
                   },
                   child: Row(
@@ -508,7 +694,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           ],
                         ),
                       ),
-                      const Icon(Icons.chevron_right, color: AppColors.primary),
+                      const Icon(Icons.play_circle_fill, color: AppColors.secondary, size: 32),
                     ],
                   ),
                 ),
@@ -539,7 +725,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   padding: const EdgeInsets.all(12),
                   onTap: () {
                     if (albumSongs.isNotEmpty) {
-                      audioService.playSong(albumSongs.first);
+                      audioService.playPlaylist(albumSongs, albumSongs.first);
                     }
                   },
                   child: Row(
@@ -570,7 +756,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           ],
                         ),
                       ),
-                      const Icon(Icons.album_rounded, color: AppColors.secondary),
+                      const Icon(Icons.play_circle_fill, color: AppColors.tertiary, size: 32),
                     ],
                   ),
                 ),
@@ -642,7 +828,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ? AppColors.primaryContainer.withOpacity(0.2)
                     : AppColors.surfaceContainerLow.withOpacity(0.6),
                 padding: const EdgeInsets.all(8.0),
-                onTap: () => audioService.playSong(song),
+                onTap: () => audioService.playPlaylist(songs, song),
                 child: Row(
                   children: [
                     ClipRRect(

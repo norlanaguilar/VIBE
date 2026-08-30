@@ -338,8 +338,20 @@ class AudioPlayerService extends ChangeNotifier {
 
   List<Song> get likedSongs => _librarySongs.where((s) => s.isLiked).toList();
 
+  List<Song> _activeQueue = [];
+  List<Song> get activeQueue => _activeQueue.isNotEmpty ? _activeQueue : _librarySongs;
+
+  /// Reproducir una lista o cola específica de canciones
+  Future<void> playPlaylist(List<Song> playlistSongs, Song startSong) async {
+    _activeQueue = List.from(playlistSongs);
+    await playSong(startSong);
+  }
+
   Future<void> playSong(Song song) async {
     _currentSong = song;
+    if (_activeQueue.isEmpty || !_activeQueue.any((s) => s.id == song.id)) {
+      _activeQueue = List.from(_librarySongs);
+    }
     notifyListeners();
 
     try {
@@ -380,8 +392,8 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   Future<void> togglePlayPause() async {
-    if (_currentSong == null && _librarySongs.isNotEmpty) {
-      await playSong(_librarySongs.first);
+    if (_currentSong == null && activeQueue.isNotEmpty) {
+      await playSong(activeQueue.first);
       return;
     }
 
@@ -402,25 +414,31 @@ class AudioPlayerService extends ChangeNotifier {
   }
 
   void skipNext() {
-    if (_librarySongs.isEmpty) return;
-    int currentIndex = _librarySongs.indexWhere((s) => s.id == _currentSong?.id);
-    if (_isShuffle && _librarySongs.length > 1) {
+    final queue = activeQueue;
+    if (queue.isEmpty) return;
+    int currentIndex = queue.indexWhere((s) => s.id == _currentSong?.id);
+    if (currentIndex == -1) currentIndex = 0;
+
+    if (_isShuffle && queue.length > 1) {
       int randomIndex;
       do {
-        randomIndex = (DateTime.now().millisecondsSinceEpoch) % _librarySongs.length;
+        randomIndex = (DateTime.now().millisecondsSinceEpoch) % queue.length;
       } while (randomIndex == currentIndex);
-      playSong(_librarySongs[randomIndex]);
+      playSong(queue[randomIndex]);
     } else {
-      int nextIndex = (currentIndex + 1) % _librarySongs.length;
-      playSong(_librarySongs[nextIndex]);
+      int nextIndex = (currentIndex + 1) % queue.length;
+      playSong(queue[nextIndex]);
     }
   }
 
   void skipPrevious() {
-    if (_librarySongs.isEmpty) return;
-    int currentIndex = _librarySongs.indexWhere((s) => s.id == _currentSong?.id);
-    int prevIndex = (currentIndex - 1 + _librarySongs.length) % _librarySongs.length;
-    playSong(_librarySongs[prevIndex]);
+    final queue = activeQueue;
+    if (queue.isEmpty) return;
+    int currentIndex = queue.indexWhere((s) => s.id == _currentSong?.id);
+    if (currentIndex == -1) currentIndex = 0;
+
+    int prevIndex = (currentIndex - 1 + queue.length) % queue.length;
+    playSong(queue[prevIndex]);
   }
 
   Future<void> toggleShuffle() async {

@@ -602,6 +602,7 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
   bool _isLoading = true;
   LyricsResult _lyricsResult = LyricsResult.empty();
   final ScrollController _scrollController = ScrollController();
+  int _lastActiveIndex = -1;
 
   @override
   void initState() {
@@ -619,6 +620,18 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
     }
   }
 
+  void _scrollToActiveLine(int index) {
+    if (index != _lastActiveIndex && _scrollController.hasClients && index >= 0) {
+      _lastActiveIndex = index;
+      final targetOffset = (index * 48.0) - 100.0;
+      _scrollController.animateTo(
+        targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
   @override
   void dispose() {
     _scrollController.dispose();
@@ -629,6 +642,25 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
   Widget build(BuildContext context) {
     final audioService = Provider.of<AudioPlayerService>(context);
     final currentPos = audioService.position;
+
+    int activeIndex = -1;
+    if (_lyricsResult.isSynced && _lyricsResult.syncedLines.isNotEmpty) {
+      for (int i = 0; i < _lyricsResult.syncedLines.length; i++) {
+        final line = _lyricsResult.syncedLines[i];
+        final nextLineTime = i < _lyricsResult.syncedLines.length - 1
+            ? _lyricsResult.syncedLines[i + 1].timestamp
+            : const Duration(hours: 10);
+        if (currentPos >= line.timestamp && currentPos < nextLineTime) {
+          activeIndex = i;
+          break;
+        }
+      }
+      if (activeIndex != -1) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scrollToActiveLine(activeIndex);
+        });
+      }
+    }
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.75,
@@ -690,7 +722,7 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
                       children: [
                         CircularProgressIndicator(color: AppColors.primary),
                         SizedBox(height: 16),
-                        Text('Buscando letras en tiempo real...', style: TextStyle(color: Colors.white70)),
+                        Text('🤖 Identificando letras en tiempo real...', style: TextStyle(color: Colors.white70)),
                       ],
                     ),
                   )
@@ -708,9 +740,7 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
                             itemCount: _lyricsResult.syncedLines.length,
                             itemBuilder: (context, index) {
                               final line = _lyricsResult.syncedLines[index];
-                              final isCurrent = index < _lyricsResult.syncedLines.length - 1
-                                  ? (currentPos >= line.timestamp && currentPos < _lyricsResult.syncedLines[index + 1].timestamp)
-                                  : currentPos >= line.timestamp;
+                              final isCurrent = index == activeIndex;
 
                               return GestureDetector(
                                 onTap: () => audioService.seek(line.timestamp),
@@ -720,7 +750,7 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
                                     duration: const Duration(milliseconds: 200),
                                     style: TextStyle(
                                       color: isCurrent ? AppColors.primary : Colors.white.withOpacity(0.5),
-                                      fontSize: isCurrent ? 20 : 16,
+                                      fontSize: isCurrent ? 22 : 16,
                                       fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
                                       height: 1.4,
                                     ),

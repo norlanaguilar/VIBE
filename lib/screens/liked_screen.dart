@@ -100,7 +100,7 @@ class LikedScreen extends StatelessWidget {
                                 ElevatedButton.icon(
                                   onPressed: likedSongs.isEmpty
                                       ? null
-                                      : () => audioService.playSong(likedSongs.first),
+                                      : () => audioService.playPlaylist(likedSongs, likedSongs.first),
                                   icon: const Icon(Icons.play_arrow, size: 18),
                                   label: const Text('PLAY ALL'),
                                   style: ElevatedButton.styleFrom(
@@ -119,7 +119,7 @@ class LikedScreen extends StatelessWidget {
                                       ? null
                                       : () {
                                           audioService.toggleShuffle();
-                                          audioService.skipNext();
+                                          audioService.playPlaylist(likedSongs, likedSongs.first);
                                         },
                                   icon: const Icon(Icons.shuffle, size: 16),
                                   label: const Text('SHUFFLE'),
@@ -169,7 +169,7 @@ class LikedScreen extends StatelessWidget {
                                 ? AppColors.primaryContainer.withOpacity(0.2)
                                 : AppColors.surfaceContainerLow.withOpacity(0.6),
                             padding: const EdgeInsets.all(8.0),
-                            onTap: () => audioService.playSong(song),
+                            onTap: () => audioService.playPlaylist(likedSongs, song),
                             child: Row(
                               children: [
                                 ClipRRect(

@@ -10,8 +10,8 @@ class SpectrumVisualizer extends StatefulWidget {
   const SpectrumVisualizer({
     super.key,
     required this.isPlaying,
-    this.barCount = 36,
-    this.height = 32,
+    this.barCount = 32,
+    this.height = 60,
   });
 
   @override
@@ -26,7 +26,7 @@ class _SpectrumVisualizerState extends State<SpectrumVisualizer> with SingleTick
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 600),
     );
     if (widget.isPlaying) {
       _controller.repeat();
@@ -57,53 +57,55 @@ class _SpectrumVisualizerState extends State<SpectrumVisualizer> with SingleTick
       animation: _controller,
       builder: (context, child) {
         final t = _controller.value * 2 * pi;
+
         return SizedBox(
           height: widget.height,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: List.generate(widget.barCount, (index) {
               double factor;
               if (widget.isPlaying) {
-                // Multi-harmonic audio frequency simulation
-                double freq1 = sin(t * 3.0 + index * 0.45);
-                double freq2 = cos(t * 5.0 - index * 0.25);
-                double freq3 = sin(t * 7.5 + index * 0.85);
-                
-                // Bass boost curve towards center/sides
-                double envelope = 0.5 + 0.5 * sin((index / widget.barCount) * pi);
-                
-                factor = ((freq1 + freq2 + freq3) / 3.0).abs() * envelope;
-                factor = factor.clamp(0.12, 1.0);
+                // Frecuencias verticales dinámicas que reaccionan al ritmo
+                double bassBeat = sin(t * 4.0 + (index % 4) * 0.8).abs();
+                double midRange = cos(t * 7.0 - index * 0.35).abs();
+                double treblePeak = sin(t * 11.0 + index * 1.2).abs();
+
+                double envelope = sin((index / widget.barCount) * pi); // Curva cóncava de ecualizador
+                factor = ((bassBeat * 0.5) + (midRange * 0.3) + (treblePeak * 0.2)) * (0.4 + 0.6 * envelope);
+                factor = factor.clamp(0.08, 1.0);
               } else {
-                factor = 0.12;
+                factor = 0.08;
               }
 
-              double minHeight = 4.0;
-              double maxHeight = widget.height * 0.90;
+              double minHeight = 6.0;
+              double maxHeight = widget.height;
               double currentHeight = minHeight + (maxHeight - minHeight) * factor;
 
-              Color barColor = AppColors.primary;
-              if (index % 4 == 0) {
-                barColor = AppColors.secondary;
-              } else if (index % 3 == 0) {
-                barColor = AppColors.tertiary;
-              }
+              // Alternancia neón elegante (Violeta Eléctrico y Cyan)
+              Color barColor = (index % 2 == 0) ? AppColors.primary : AppColors.secondary;
 
               return AnimatedContainer(
-                duration: const Duration(milliseconds: 50),
-                margin: const EdgeInsets.symmetric(horizontal: 1.5),
-                width: 3.5,
+                duration: const Duration(milliseconds: 40),
+                margin: const EdgeInsets.symmetric(horizontal: 2.0),
+                width: 4.5,
                 height: currentHeight,
                 decoration: BoxDecoration(
-                  color: barColor.withOpacity(widget.isPlaying ? 0.90 : 0.40),
-                  borderRadius: BorderRadius.circular(2),
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      barColor.withOpacity(0.50),
+                      barColor,
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(4),
                   boxShadow: widget.isPlaying
                       ? [
                           BoxShadow(
-                            color: barColor.withOpacity(0.35),
-                            blurRadius: 4,
-                            spreadRadius: 0.5,
+                            color: barColor.withOpacity(0.45),
+                            blurRadius: 6,
+                            spreadRadius: 1,
                           ),
                         ]
                       : [],
