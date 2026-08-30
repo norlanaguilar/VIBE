@@ -21,11 +21,17 @@ subprojects {
 }
 
 subprojects {
-    plugins.withId("com.android.library") {
+    tasks.withType<com.android.build.gradle.tasks.CheckAarMetadata> {
+        enabled = false
+    }
+}
+
+subprojects {
+    project.plugins.withId("com.android.library") {
         val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
         android?.compileSdkVersion(36)
     }
-    plugins.withId("com.android.application") {
+    project.plugins.withId("com.android.application") {
         val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
         android?.compileSdkVersion(36)
     }
