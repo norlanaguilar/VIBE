@@ -6,7 +6,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/song_model.dart';
 import 'ai_tagger_service.dart';
@@ -73,14 +73,14 @@ class AudioPlayerService extends ChangeNotifier {
   /// Playlists combinadas (Automáticas + Personalizadas del usuario)
   Map<String, List<Song>> get playlists {
     final Map<String, List<Song>> result = {
-      'Mis Favoritas ❤️': likedSongs,
-      'Agregadas Recientemente 🕒': _librarySongs.take(10).toList(),
-      'Música Local 📁': _librarySongs,
+      'Mis Favoritas': likedSongs,
+      'Agregadas Recientemente': _librarySongs.take(10).toList(),
+      'Música Local': _librarySongs,
     };
 
     _userPlaylists.forEach((name, songIds) {
       final songsInPlaylist = _librarySongs.where((s) => songIds.contains(s.id)).toList();
-      result['🎵 $name'] = songsInPlaylist;
+      result[name] = songsInPlaylist;
     });
 
     return result;
@@ -231,16 +231,34 @@ class AudioPlayerService extends ChangeNotifier {
 
       final List<Directory> dirsToScan = [
         appDir,
-        Directory('/storage/emulated/0/Music'),
-        Directory('/storage/emulated/0/Download'),
-        Directory('/sdcard/Music'),
-        Directory('/sdcard/Download'),
       ];
+
+      if (Platform.isAndroid) {
+        final List<String> publicRoots = [
+          '/storage/emulated/0/Music'
+        ];
+
+        for (final root in publicRoots) {
+          final rootDir = Directory(root);
+          if (await rootDir.exists()) {
+            // Crear carpeta 'Vibe' adentro para que el usuario sepa dónde meter su música
+            final vibeFolder = Directory(path.join(root, 'Vibe'));
+            try {
+              if (!await vibeFolder.exists()) {
+                await vibeFolder.create();
+              }
+              // Solo añadimos la carpeta Vibe para escanear, evitando duplicados
+              dirsToScan.add(vibeFolder);
+            } catch (_) {}
+          }
+        }
+      }
 
       for (final dir in dirsToScan) {
         if (await dir.exists()) {
           try {
-            final List<FileSystemEntity> entities = dir.listSync(recursive: true, followLinks: false);
+            // recursive: false previene excepciones fatales en Android al tocar carpetas bloqueadas por el sistema
+            final List<FileSystemEntity> entities = dir.listSync(recursive: false, followLinks: false);
             for (final entity in entities) {
               if (entity is File && !scannedPaths.contains(entity.path)) {
                 scannedPaths.add(entity.path);
@@ -581,41 +599,41 @@ class AudioPlayerService extends ChangeNotifier {
     return enriched ?? updated;
   }
 
-  /// Importar canciones manualmente desde el explorador de archivos nativo de Android / iOS
+
+  /// Importar canciones manualmente usando file_selector
   Future<List<Song>> importCustomMusicFile() async {
     List<Song> importedSongs = [];
     try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['mp3', 'm4a', 'wav', 'flac', 'aac', 'ogg', 'webm'],
-        allowMultiple: true,
+      const XTypeGroup audioTypeGroup = XTypeGroup(
+        label: 'Audio files',
+        extensions: <String>['mp3', 'm4a', 'wav', 'flac', 'aac', 'ogg', 'webm'],
       );
 
-      if (result != null && result.files.isNotEmpty) {
+      final List<XFile> files = await openFiles(acceptedTypeGroups: <XTypeGroup>[audioTypeGroup]);
+
+      if (files.isNotEmpty) {
         final docDir = await getApplicationDocumentsDirectory();
         final musicDir = Directory(path.join(docDir.path, 'imported_music'));
         if (!await musicDir.exists()) {
           await musicDir.create(recursive: true);
         }
 
-        for (final file in result.files) {
-          if (file.path != null) {
-            final fileName = path.basename(file.path!);
-            final targetPath = path.join(musicDir.path, fileName);
-            await File(file.path!).copy(targetPath);
+        for (final file in files) {
+          final fileName = path.basename(file.path);
+          final targetPath = path.join(musicDir.path, fileName);
+          await File(file.path).copy(targetPath);
 
-            final song = Song(
-              id: targetPath,
-              title: path.basenameWithoutExtension(fileName),
-              artist: 'Artista Local',
-              album: 'Música Importada',
-              localAudioPath: targetPath,
-              isDownloaded: true,
-            );
+          final song = Song(
+            id: targetPath,
+            title: path.basenameWithoutExtension(fileName),
+            artist: 'Artista Local',
+            album: 'Música Importada',
+            localAudioPath: targetPath,
+            isDownloaded: true,
+          );
 
-            addSong(song);
-            importedSongs.add(song);
-          }
+          addSong(song);
+          importedSongs.add(song);
         }
       }
     } catch (e) {

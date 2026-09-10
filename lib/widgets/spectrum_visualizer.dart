@@ -66,13 +66,24 @@ class _SpectrumVisualizerState extends State<SpectrumVisualizer> with SingleTick
             children: List.generate(widget.barCount, (index) {
               double factor;
               if (widget.isPlaying) {
-                // Frecuencias verticales dinámicas que reaccionan al ritmo
-                double bassBeat = sin(t * 4.0 + (index % 4) * 0.8).abs();
-                double midRange = cos(t * 7.0 - index * 0.35).abs();
-                double treblePeak = sin(t * 11.0 + index * 1.2).abs();
+                // Generar un comportamiento pseudo-aleatorio único para CADA barra usando semillas matemáticas irracionales
+                double speed1 = 2.5 + (index % 3) * 1.5;
+                double speed2 = 6.0 + (index % 5) * 1.2;
+                double speed3 = 14.0 + (index % 7) * 0.8;
+                
+                double phase1 = index * 0.5;
+                double phase2 = index * 1.3;
+                double phase3 = index * 2.7;
 
-                double envelope = sin((index / widget.barCount) * pi); // Curva cóncava de ecualizador
-                factor = ((bassBeat * 0.5) + (midRange * 0.3) + (treblePeak * 0.2)) * (0.4 + 0.6 * envelope);
+                // Combinación de 3 ondas a diferentes velocidades para crear ruido suave y desincronizado (smooth noise)
+                double wave1 = sin(t * speed1 + phase1).abs();
+                double wave2 = cos(t * speed2 + phase2).abs();
+                double wave3 = sin(t * speed3 + phase3).abs();
+
+                // Envolvente tipo "campana" para simular EQ real (vocales al centro más altas, bajos y agudos a los lados)
+                double envelope = sin((index / (widget.barCount - 1)) * pi);
+                
+                factor = (wave1 * 0.4 + wave2 * 0.4 + wave3 * 0.2) * (0.3 + 0.7 * envelope);
                 factor = factor.clamp(0.08, 1.0);
               } else {
                 factor = 0.08;

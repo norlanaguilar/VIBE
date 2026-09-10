@@ -164,7 +164,7 @@ class NowPlayingScreen extends StatelessWidget {
                         ),
                       ),
                       PopupMenuButton<String>(
-                        icon: const Icon(Icons.settings_suggest, color: AppColors.primary, size: 26),
+                        icon: const Icon(Icons.settings, color: AppColors.primary, size: 26),
                         color: AppColors.surfaceContainerHigh,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         onSelected: (value) async {
@@ -181,7 +181,7 @@ class NowPlayingScreen extends StatelessWidget {
                             if (updated != null && context.mounted) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
-                                  content: Text('🎬 Video asignado como carátula (en bucle y sin audio)'),
+                                  content: Text('Video asignado como carátula (en bucle y sin audio)'),
                                   backgroundColor: Colors.green,
                                 ),
                               );
@@ -189,7 +189,7 @@ class NowPlayingScreen extends StatelessWidget {
                           } else if (value == 'ai_tag') {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('🤖 Identificando canción con IA...'),
+                                content: Text('Identificando canción con IA...'),
                                 backgroundColor: AppColors.primaryContainer,
                                 duration: Duration(seconds: 2),
                               ),
@@ -212,7 +212,7 @@ class NowPlayingScreen extends StatelessWidget {
                               children: [
                                 const Icon(Icons.playlist_add, color: AppColors.primary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('➕ Agregar a Playlist', style: AppTypography.bodySm),
+                                Text('Agregar a Playlist', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -222,7 +222,7 @@ class NowPlayingScreen extends StatelessWidget {
                               children: [
                                 const Icon(Icons.subtitles, color: AppColors.secondary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('📜 Ver Letras Sincronizadas', style: AppTypography.bodySm),
+                                Text('Ver Letras Sincronizadas', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -232,7 +232,7 @@ class NowPlayingScreen extends StatelessWidget {
                               children: [
                                 const Icon(Icons.video_library, color: AppColors.tertiary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('🎬 Elegir Video de la Galería', style: AppTypography.bodySm),
+                                Text('Elegir Video de la Galería', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -242,7 +242,7 @@ class NowPlayingScreen extends StatelessWidget {
                               children: [
                                 const Icon(Icons.edit_note, color: AppColors.primary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('✏️ Editar Título y Artista', style: AppTypography.bodySm),
+                                Text('Editar Título y Artista', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -252,7 +252,7 @@ class NowPlayingScreen extends StatelessWidget {
                               children: [
                                 const Icon(Icons.auto_awesome, color: AppColors.secondary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('🤖 Identificar con IA', style: AppTypography.bodySm),
+                                Text('Identificar con IA', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -262,7 +262,7 @@ class NowPlayingScreen extends StatelessWidget {
                               children: [
                                 const Icon(Icons.equalizer, color: AppColors.primary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('⚙️ Ecualizador & Ajustes', style: AppTypography.bodySm),
+                                Text('Ecualizador y Ajustes', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -273,36 +273,43 @@ class NowPlayingScreen extends StatelessWidget {
                 ),
 
                 Expanded(
-                  child: SingleChildScrollView(
+                  child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 24.0),
                     child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const SizedBox(height: 36),
+                        const Spacer(flex: 1),
 
                         // Album Artwork / Video Cover Card with Neon Glow Shadow
-                        Container(
-                          width: double.infinity,
-                          constraints: const BoxConstraints(maxHeight: 280),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(24),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.primary.withOpacity(0.35),
-                                blurRadius: 30,
-                                spreadRadius: 2,
-                                offset: const Offset(0, 8),
+                        Expanded(
+                          flex: 10,
+                          child: Center(
+                            child: Container(
+                              width: double.infinity,
+                              constraints: const BoxConstraints(maxWidth: 400),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(24),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.primary.withOpacity(0.35),
+                                    blurRadius: 30,
+                                    spreadRadius: 2,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(24),
-                            child: AspectRatio(
-                              aspectRatio: 1.0,
-                              child: _buildCoverImage(song),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(24),
+                                child: AspectRatio(
+                                  aspectRatio: 1.0,
+                                  child: _buildCoverImage(song),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                        const SizedBox(height: 32),
+                        
+                        const Spacer(flex: 2),
 
                         // Title, Artist, & Favorite Heart Button
                         Row(
@@ -344,7 +351,8 @@ class NowPlayingScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 24),
+                        
+                        const Spacer(flex: 1),
 
                         // Dynamic Multi-Harmonic Spectrum Visualizer
                         SpectrumVisualizer(
@@ -352,7 +360,8 @@ class NowPlayingScreen extends StatelessWidget {
                           barCount: 36,
                           height: 32,
                         ),
-                        const SizedBox(height: 24),
+                        
+                        const Spacer(flex: 1),
 
                         // Progress Seek Bar & Timers
                         Column(
@@ -394,7 +403,8 @@ class NowPlayingScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 28),
+                        
+                        const Spacer(flex: 1),
 
                         // Playback Controls Row
                         Row(
@@ -465,7 +475,8 @@ class NowPlayingScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 48),
+                        
+                        const Spacer(flex: 2),
                       ],
                     ),
                   ),

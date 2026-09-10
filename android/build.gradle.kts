@@ -14,29 +14,24 @@ rootProject.layout.buildDirectory.value(newBuildDir)
 subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
+    
+    // Auto-patch para plugins de Flutter obsoletos (como flutter_inappwebview) que usan proguard-android.txt
+    // Esto previene el error "is no longer supported since it includes -dontoptimize" en AGP 8+
+    val pluginBuildFile = project.buildFile
+    if (pluginBuildFile.exists()) {
+        val content = pluginBuildFile.readText()
+        if (content.contains("proguard-android.txt\"")) {
+            pluginBuildFile.writeText(content.replace("proguard-android.txt\"", "proguard-android-optimize.txt\""))
+        } else if (content.contains("proguard-android.txt'")) {
+            pluginBuildFile.writeText(content.replace("proguard-android.txt'", "proguard-android-optimize.txt'"))
+        }
+    }
 }
-
 subprojects {
     project.evaluationDependsOn(":app")
-}
-
-subprojects {
-    tasks.withType<com.android.build.gradle.tasks.CheckAarMetadata> {
-        enabled = false
-    }
-}
-
-subprojects {
-    project.plugins.withId("com.android.library") {
-        val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
-        android?.compileSdkVersion(36)
-    }
-    project.plugins.withId("com.android.application") {
-        val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
-        android?.compileSdkVersion(36)
-    }
 }
 
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+

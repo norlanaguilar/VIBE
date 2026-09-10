@@ -107,8 +107,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   void _showPlaylistDetailSheet(
       BuildContext context, AudioPlayerService audioService, String playlistName, List<Song> playlistSongs) {
-    final cleanName = playlistName.replaceFirst('🎵 ', '');
-    final isCustom = playlistName.startsWith('🎵 ');
+    final isCustom = audioService.userPlaylists.containsKey(playlistName);
+    final cleanName = playlistName;
 
     showModalBottomSheet(
       context: context,
@@ -318,21 +318,22 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                     Row(
                       children: [
-                        IconButton(
-                          icon: const Icon(Icons.file_open_outlined, color: AppColors.tertiary),
-                          onPressed: () async {
-                            final imported = await audioService.importCustomMusicFile();
-                            if (imported.isNotEmpty && context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('¡${imported.length} canciones importadas a la biblioteca!'),
-                                  backgroundColor: Colors.green,
-                                ),
-                              );
-                            }
-                          },
-                          tooltip: 'Importar archivos de música',
-                        ),
+                        if (Platform.isAndroid)
+                          IconButton(
+                            icon: const Icon(Icons.file_open_outlined, color: AppColors.tertiary),
+                            onPressed: () async {
+                              final imported = await audioService.importCustomMusicFile();
+                              if (imported.isNotEmpty && context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('¡${imported.length} canciones importadas a la biblioteca!'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              }
+                            },
+                            tooltip: 'Importar archivos de música',
+                          ),
                         IconButton(
                           icon: const Icon(Icons.sync, color: AppColors.secondary),
                           onPressed: () => audioService.scanLocalLibrary(),

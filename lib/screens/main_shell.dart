@@ -5,6 +5,7 @@ import '../widgets/mini_player_bar.dart';
 import 'library_screen.dart';
 import 'liked_screen.dart';
 import 'settings_screen.dart';
+import 'discover_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -18,6 +19,7 @@ class _MainShellState extends State<MainShell> {
 
   final List<Widget> _pages = const [
     LibraryScreen(),
+    DiscoverScreen(),
     LikedScreen(),
     SettingsScreen(),
   ];
@@ -70,8 +72,9 @@ class _MainShellState extends State<MainShell> {
 
                   // Navigation Links
                   _buildDesktopNavItem(0, Icons.folder_open, 'Local Files'),
-                  _buildDesktopNavItem(1, Icons.favorite, 'Me gusta'),
-                  _buildDesktopNavItem(2, Icons.settings, 'Ajustes'),
+                  _buildDesktopNavItem(1, Icons.explore, 'Descubrir'),
+                  _buildDesktopNavItem(2, Icons.favorite, 'Me gusta'),
+                  _buildDesktopNavItem(3, Icons.settings, 'Ajustes'),
 
                   const Spacer(),
                   Text(
@@ -136,6 +139,11 @@ class _MainShellState extends State<MainShell> {
             icon: Icon(Icons.library_music_outlined, color: AppColors.onSurfaceVariant),
             selectedIcon: Icon(Icons.library_music, color: AppColors.onSecondaryContainer),
             label: 'Biblioteca',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.explore_outlined, color: AppColors.onSurfaceVariant),
+            selectedIcon: Icon(Icons.explore, color: AppColors.onSecondaryContainer),
+            label: 'Descubrir',
           ),
           NavigationDestination(
             icon: Icon(Icons.favorite_outline, color: AppColors.onSurfaceVariant),
