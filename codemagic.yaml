@@ -11,6 +11,10 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter pub get
+      - name: Install iOS Pods
+        script: |
+          cd ios
+          pod install --repo-update
       - name: Build Flutter iOS Release App
         script: |
           xcodebuild -workspace ios/Runner.xcworkspace \
