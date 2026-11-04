@@ -17,12 +17,14 @@ import Accelerate
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
-    let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "VibeNativePlugin")
+    guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "VibeNativePlugin") else {
+      return
+    }
     let messenger = registrar.messenger()
 
     // Canal para análisis de espectro FFT por adelantado (iOS)
     let spectrumChannel = FlutterMethodChannel(name: "vibe/spectrum", binaryMessenger: messenger)
-    spectrumChannel.setMethodCallHandler { [weak self] (call, result) in
+    spectrumChannel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
       guard let self = self else { return }
       if call.method == "analyze" {
         guard let args = call.arguments as? [String: Any],
@@ -45,8 +47,9 @@ import Accelerate
     }
 
     // Canal para Widget
-    widgetChannel = FlutterMethodChannel(name: "vibe/widget", binaryMessenger: messenger)
-    widgetChannel?.setMethodCallHandler { (call, result) in
+    let widget = FlutterMethodChannel(name: "vibe/widget", binaryMessenger: messenger)
+    self.widgetChannel = widget
+    widget.setMethodCallHandler { (call: FlutterMethodCall, result: @escaping FlutterResult) in
       if call.method == "update" {
         // En iOS, las actualizaciones de estado para Widgets se pueden sincronizar con UserDefaults compartidos si se usa App Groups
         result(true)
