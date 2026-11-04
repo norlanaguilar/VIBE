@@ -543,6 +543,47 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
+  final List<Song> _backgroundQueue = [];
+  bool _isProcessingBackgroundQueue = false;
+
+  /// Encola canciones para resolver su enlace de YouTube, su carátula real y descargarlas en segundo plano
+  void enqueueForBackgroundProcessing(List<Song> songs) {
+    for (final song in songs) {
+      if (!_backgroundQueue.any((s) => s.id == song.id)) {
+        if (song.localAudioPath == null ||
+            !File(song.localAudioPath!).existsSync() ||
+            File(song.localAudioPath!).lengthSync() < 50000 ||
+            song.youtubeId == null ||
+            song.localCoverPath == null) {
+          _backgroundQueue.add(song);
+        }
+      }
+    }
+    _processBackgroundQueue();
+  }
+
+  Future<void> _processBackgroundQueue() async {
+    if (_isProcessingBackgroundQueue) return;
+    _isProcessingBackgroundQueue = true;
+
+    while (_backgroundQueue.isNotEmpty) {
+      final currentBatch = _backgroundQueue.take(2).toList();
+      _backgroundQueue.removeRange(0, currentBatch.length);
+
+      await Future.wait(currentBatch.map((song) async {
+        try {
+          await _preloadSongInBackground(song);
+        } catch (e) {
+          print('Background preloader error for ${song.title}: $e');
+        }
+      }));
+
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+
+    _isProcessingBackgroundQueue = false;
+  }
+
   void addSong(Song song) {
     _librarySongs.removeWhere((s) =>
         s.id == song.id || (song.localAudioPath != null && s.localAudioPath == song.localAudioPath));
@@ -556,13 +597,8 @@ class AudioPlayerService extends ChangeNotifier {
     _saveMetadataCache();
     notifyListeners();
 
-    // Precargar automáticamente el audio en segundo plano al agregarla para reproducción instantánea
-    if (song.youtubeId != null &&
-        (song.localAudioPath == null ||
-            !File(song.localAudioPath!).existsSync() ||
-            File(song.localAudioPath!).lengthSync() < 50000)) {
-      _preloadSongInBackground(song);
-    }
+    // Iniciar descarga y resolución en segundo plano inmediatamente
+    enqueueForBackgroundProcessing([song]);
   }
 
   /// Agrega múltiples canciones en lote a la biblioteca y opcionalmente a una playlist
@@ -591,22 +627,55 @@ class AudioPlayerService extends ChangeNotifier {
     await _saveMetadataCache();
     notifyListeners();
 
-    // Precargar la primera canción en segundo plano para reproducción instantánea si el usuario le da play
-    if (songs.isNotEmpty && songs.first.youtubeId != null) {
-      _preloadSongInBackground(songs.first);
-    }
+    // Iniciar descarga y enriquecimiento de carátulas en segundo plano
+    enqueueForBackgroundProcessing(songs);
   }
 
-  /// Descarga el audio en segundo plano de forma silenciosa e instantánea
+  /// Descarga el audio en segundo plano de forma silenciosa e instantánea, resolviendo metadatos si faltan
   Future<void> _preloadSongInBackground(Song song) async {
-    if (song.youtubeId == null) return;
     _downloadingSongIds.add(song.id);
     notifyListeners();
 
     try {
+      // 1. Resolver enlace de YouTube si aún no está asignado
+      if (song.youtubeId == null || song.youtubeId!.isEmpty) {
+        final ytId = await LinkImportService.findOnYouTube(song.artist, song.title, song.duration);
+        if (ytId != null && ytId.isNotEmpty) {
+          song = song.copyWith(youtubeId: ytId);
+          final idx = _librarySongs.indexWhere((s) => s.id == song.id);
+          if (idx != -1) _librarySongs[idx] = song;
+          if (_currentSong?.id == song.id) _currentSong = song;
+          await _saveMetadataCache();
+        } else {
+          return;
+        }
+      }
+
+      // 2. Resolver carátula real del álbum/canción si aún no tiene carátula local
+      if (song.localCoverPath == null || !File(song.localCoverPath!).existsSync()) {
+        String? spotifyId;
+        if (song.sourceUrl != null) {
+          final m = RegExp(r'track/([A-Za-z0-9]{22})').firstMatch(song.sourceUrl!);
+          spotifyId = m?.group(1);
+        }
+        final coverUrl = await LinkImportService.fetchTrackCover(
+          artist: song.artist,
+          title: song.title,
+          spotifyTrackId: spotifyId,
+        );
+        if (coverUrl != null && coverUrl.isNotEmpty) {
+          final localPath = await AITaggerService.downloadAndSaveCover(coverUrl, song.id);
+          song = song.copyWith(coverUrl: coverUrl, localCoverPath: localPath);
+          final idx = _librarySongs.indexWhere((s) => s.id == song.id);
+          if (idx != -1) _librarySongs[idx] = song;
+          if (_currentSong?.id == song.id) _currentSong = song;
+          await _saveMetadataCache();
+        }
+      }
+
+      // 3. Descargar el archivo de audio a la caché local
       final cachedFile = await YouTubeStreamResolver.getOrDownloadStreamAudio(song.youtubeId!);
       if (await cachedFile.exists() && await cachedFile.length() > 50000) {
-        // Verificar duración precisa del archivo descargado para evitar duplicaciones por códec SBR
         Duration songDuration = song.duration;
         final exactM4aDur = await AudioDurationHelper.readM4aDuration(cachedFile);
         if (exactM4aDur != null && exactM4aDur > Duration.zero) {
@@ -635,7 +704,7 @@ class AudioPlayerService extends ChangeNotifier {
         await _saveMetadataCache();
       }
     } catch (e) {
-      print('Error precargando canción en segundo plano: $e');
+      print('Error precargando canción en segundo plano (${song.title}): $e');
     } finally {
       _downloadingSongIds.remove(song.id);
       notifyListeners();
@@ -646,21 +715,48 @@ class AudioPlayerService extends ChangeNotifier {
 
   /// Quitar una canción importada (streaming/offline) de la biblioteca
   Future<void> removeStreamingSong(Song song) async {
-    if (!song.isImported) return;
-    _librarySongs.removeWhere((s) => s.id == song.id);
-    _activeQueue.removeWhere((s) => s.id == song.id);
-    if (song.localAudioPath != null) {
-      try {
-        final f = File(song.localAudioPath!);
-        if (await f.exists()) await f.delete();
-      } catch (_) {}
-    }
-    for (final ids in _userPlaylists.values) {
-      ids.remove(song.id);
+    await deleteSongs([song.id]);
+  }
+
+  /// Elimina múltiples canciones seleccionadas de la biblioteca y del almacenamiento
+  Future<void> deleteSongs(List<String> songIds) async {
+    final toDelete = _librarySongs.where((s) => songIds.contains(s.id)).toList();
+    for (final song in toDelete) {
+      _librarySongs.removeWhere((s) => s.id == song.id);
+      _activeQueue.removeWhere((s) => s.id == song.id);
+      if (_currentSong?.id == song.id) {
+        await _player.stop();
+        _isPlaying = false;
+        _currentSong = null;
+      }
+      if (song.localAudioPath != null) {
+        try {
+          final f = File(song.localAudioPath!);
+          if (await f.exists()) await f.delete();
+        } catch (_) {}
+      }
+      for (final ids in _userPlaylists.values) {
+        ids.remove(song.id);
+      }
     }
     await _savePlaylistsCache();
     await _saveMetadataCache();
     notifyListeners();
+  }
+
+  /// Elimina una playlist completa con opción de borrar también sus canciones de la biblioteca
+  Future<void> deletePlaylistWithSongs(String playlistName, {bool deleteSongsFromLibrary = true}) async {
+    final songIds = _userPlaylists[playlistName] != null
+        ? List<String>.from(_userPlaylists[playlistName]!)
+        : <String>[];
+    _userPlaylists.remove(playlistName);
+    await _savePlaylistsCache();
+
+    if (deleteSongsFromLibrary && songIds.isNotEmpty) {
+      await deleteSongs(songIds);
+    } else {
+      notifyListeners();
+    }
   }
 
   void toggleLike(Song song) {
@@ -738,6 +834,12 @@ class AudioPlayerService extends ChangeNotifier {
       }
     }
 
+    // Pausar inmediatamente la canción anterior para evitar que continúe sonando
+    // mientras la nueva canción se resuelve o descarga
+    if (_player.playing) {
+      await _player.pause();
+    }
+
     try {
       bool playedFromLocal = false;
       if (song.localAudioPath != null && await File(song.localAudioPath!).exists()) {
@@ -762,7 +864,10 @@ class AudioPlayerService extends ChangeNotifier {
     } catch (e) {
       print('Play song error: $e');
       if (token == _playToken) {
+        await _player.stop();
+        _isPlaying = false;
         playbackError.value = 'No se pudo reproducir "${song.title}"';
+        notifyListeners();
       }
     } finally {
       if (token == _playToken && _isBuffering) {

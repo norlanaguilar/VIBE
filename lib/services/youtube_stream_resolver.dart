@@ -18,25 +18,53 @@ class StreamAudioResult {
 
 /// Obtiene y almacena en caché el audio de canciones de YouTube de forma ultra-rápida y confiable.
 ///
-/// Utiliza instancias de alta disponibilidad de Invidious (que incluyen tokens `pot` y descifrado de firmas)
-/// y fallback a `youtube_explode_dart 3.1.0`.
-/// Descarga en paralelo por bloques Range en ~1 segundo, evitando errores 403 Forbidden y permitiendo
-/// reproducción offline inmediata.
+/// Resuelve el audio directamente con `youtube_explode_dart` (generando tokens vinculados a la IP del dispositivo)
+/// y descarga en bloques controlados con encabezados de navegador para evitar errores HTTP 403 Forbidden.
 class YouTubeStreamResolver {
+  static const _userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
   static final List<String> _invidiousInstances = [
     'https://inv.nadeko.net',
     'https://yt.chocolatemoo53.com',
-    'https://invidious.nerdvpn.de',
   ];
 
   static final Map<String, Future<File>> _activeDownloads = {};
 
-  /// Resuelve la URL directa del audio de un video de YouTube
+  /// Resuelve la URL directa del audio de un video de YouTube.
+  /// Prioriza youtube_explode_dart para garantizar que la URL pertenezca a la IP de este dispositivo.
   static Future<StreamAudioResult> resolveAudioStream(String videoId) async {
-    // 1. Intentar con instancias optimizadas de Invidious (incluyen firmas válidas y pot)
+    // 1. Prioridad: youtube_explode_dart (vinculado a la IP local)
+    try {
+      final yt = YoutubeExplode();
+      try {
+        final manifest = await yt.videos.streamsClient.getManifest(videoId).timeout(const Duration(seconds: 10));
+        final audioStreams = manifest.audioOnly.toList();
+        if (audioStreams.isNotEmpty) {
+          final mp4Streams = audioStreams.where((s) => s.container == StreamContainer.mp4).toList();
+          final stream = mp4Streams.isNotEmpty ? mp4Streams.withHighestBitrate() : audioStreams.withHighestBitrate();
+
+          return StreamAudioResult(
+            streamUrl: stream.url.toString(),
+            contentLength: stream.size.totalBytes,
+            container: stream.container.name,
+          );
+        }
+      } finally {
+        yt.close();
+      }
+    } catch (e) {
+      print('YouTubeExplode manifest error ($videoId): $e');
+    }
+
+    // 2. Respaldo: instancias Invidious
     for (final inst in _invidiousInstances) {
       try {
-        final res = await http.get(Uri.parse('$inst/api/v1/videos/$videoId')).timeout(const Duration(seconds: 4));
+        final res = await http.get(
+          Uri.parse('$inst/api/v1/videos/$videoId'),
+          headers: {'User-Agent': _userAgent},
+        ).timeout(const Duration(seconds: 5));
+
         if (res.statusCode == 200) {
           final data = json.decode(res.body);
           final adaptive = data['adaptiveFormats'] as List?;
@@ -47,7 +75,6 @@ class YouTubeStreamResolver {
             }).toList();
 
             if (audioList.isNotEmpty) {
-              // Preferir audio/mp4 (m4a) de mayor bitrate
               audioList.sort((a, b) {
                 final aIsMp4 = (a['type'] as String).contains('mp4') ? 1 : 0;
                 final bIsMp4 = (b['type'] as String).contains('mp4') ? 1 : 0;
@@ -71,32 +98,14 @@ class YouTubeStreamResolver {
           }
         }
       } catch (e) {
-        print('Invidious instance $inst error: $e');
+        print('Invidious fallback $inst error: $e');
       }
     }
 
-    // 2. Respaldo: youtube_explode_dart
-    final yt = YoutubeExplode();
-    try {
-      final manifest = await yt.videos.streamsClient.getManifest(videoId).timeout(const Duration(seconds: 8));
-      final audioStreams = manifest.audioOnly.toList();
-      if (audioStreams.isEmpty) {
-        throw Exception('Este video no tiene pistas de audio disponibles.');
-      }
-      final mp4Streams = audioStreams.where((s) => s.container == StreamContainer.mp4).toList();
-      final stream = mp4Streams.isNotEmpty ? mp4Streams.withHighestBitrate() : audioStreams.withHighestBitrate();
-
-      return StreamAudioResult(
-        streamUrl: stream.url.toString(),
-        contentLength: stream.size.totalBytes,
-        container: stream.container.name,
-      );
-    } finally {
-      yt.close();
-    }
+    throw Exception('No se pudo obtener la pista de audio de este video.');
   }
 
-  /// Retorna el archivo local de la canción, descargándolo en paralelo a la caché si aún no existe
+  /// Retorna el archivo local de la canción, descargándolo a la caché si aún no existe
   static Future<File> getOrDownloadStreamAudio(String videoId) async {
     if (_activeDownloads.containsKey(videoId)) {
       return await _activeDownloads[videoId]!;
@@ -132,12 +141,11 @@ class YouTubeStreamResolver {
     return await downloadToFile(videoId, file.path);
   }
 
-  /// Descarga el audio a un archivo local de forma rápida mediante bloques en paralelo
+  /// Descarga el audio a un archivo local de forma rápida y robusta
   static Future<File> downloadToFile(String videoId, String targetPath) async {
     final meta = await resolveAudioStream(videoId);
     final file = File(targetPath);
 
-    // Asegurar directorio contenedor
     final parentDir = file.parent;
     if (!await parentDir.exists()) {
       await parentDir.create(recursive: true);
@@ -150,71 +158,110 @@ class YouTubeStreamResolver {
       } catch (_) {}
     }
 
+    bool success = false;
+
+    // Intento 1: Descarga por bloques con User-Agent de navegador
     final clen = meta.contentLength > 0 ? meta.contentLength : await _probeContentLength(meta.streamUrl);
-
     if (clen > 0) {
-      // Descarga acelerada en bloques concurrentes de 1 MB
-      const chunkSize = 1024 * 1024;
-      final numChunks = (clen / chunkSize).ceil();
-      final futures = <Future<List<int>>>[];
+      try {
+        const chunkSize = 1024 * 1024; // 1 MB
+        final numChunks = (clen / chunkSize).ceil();
+        final chunks = List<List<int>?>.filled(numChunks, null);
 
-      for (int i = 0; i < numChunks; i++) {
-        final start = i * chunkSize;
-        final end = (i + 1 == numChunks) ? (clen - 1) : (start + chunkSize - 1);
-        futures.add(() async {
-          final r = await http.get(
-            Uri.parse(meta.streamUrl),
-            headers: {'Range': 'bytes=$start-$end'},
-          ).timeout(const Duration(seconds: 20));
+        // Limitar concurrencia a 3 descargas simultáneas para evitar throttling de Google
+        int index = 0;
+        Future<void> worker() async {
+          while (true) {
+            final i = index++;
+            if (i >= numChunks) break;
 
-          if (r.statusCode != 200 && r.statusCode != 206) {
-            throw Exception('Error al descargar fragmento de audio (HTTP ${r.statusCode})');
+            final start = i * chunkSize;
+            final end = (i + 1 == numChunks) ? (clen - 1) : (start + chunkSize - 1);
+
+            final r = await http.get(
+              Uri.parse(meta.streamUrl),
+              headers: {
+                'User-Agent': _userAgent,
+                'Range': 'bytes=$start-$end',
+                'Accept': '*/*',
+              },
+            ).timeout(const Duration(seconds: 15));
+
+            if (r.statusCode != 200 && r.statusCode != 206) {
+              throw Exception('HTTP ${r.statusCode}');
+            }
+            chunks[i] = r.bodyBytes;
           }
-          return r.bodyBytes;
-        }());
-      }
+        }
 
-      final chunks = await Future.wait(futures);
-      final sink = tempFile.openWrite();
-      for (final chunk in chunks) {
-        sink.add(chunk);
+        final workers = List.generate(3, (_) => worker());
+        await Future.wait(workers);
+
+        if (!chunks.any((c) => c == null)) {
+          final sink = tempFile.openWrite();
+          for (final chunk in chunks) {
+            sink.add(chunk!);
+          }
+          await sink.flush();
+          await sink.close();
+          success = true;
+        }
+      } catch (e) {
+        print('Chunked download failed ($e), falling back to sequential stream...');
+        if (await tempFile.exists()) {
+          try {
+            await tempFile.delete();
+          } catch (_) {}
+        }
       }
-      await sink.flush();
-      await sink.close();
-    } else {
-      // Descarga secuencial si no se conoce el tamaño
-      final req = await HttpClient().getUrl(Uri.parse(meta.streamUrl));
-      final resp = await req.close();
-      if (resp.statusCode != 200 && resp.statusCode != 206) {
-        throw Exception('Servidor rechazó la petición de audio (HTTP ${resp.statusCode})');
-      }
-      final sink = tempFile.openWrite();
-      await resp.pipe(sink);
     }
 
-    final len = await tempFile.length();
-    if (len < 50000) {
-      if (await tempFile.exists()) {
+    // Intento 2 (Fallback): Descarga continua vía HttpClient con User-Agent
+    if (!success) {
+      try {
+        final client = HttpClient();
+        client.userAgent = _userAgent;
+        final req = await client.getUrl(Uri.parse(meta.streamUrl));
+        final resp = await req.close();
+        if (resp.statusCode == 200 || resp.statusCode == 206) {
+          final sink = tempFile.openWrite();
+          await resp.pipe(sink);
+          success = true;
+        } else {
+          throw Exception('HTTP ${resp.statusCode}');
+        }
+      } catch (e) {
+        print('Sequential stream error: $e');
+      }
+    }
+
+    // Verificación final del archivo generado
+    if (await tempFile.exists()) {
+      final len = await tempFile.length();
+      if (len >= 50000) {
+        if (await file.exists()) {
+          try {
+            await file.delete();
+          } catch (_) {}
+        }
+        await tempFile.rename(targetPath);
+        return file;
+      } else {
         try {
           await tempFile.delete();
         } catch (_) {}
       }
-      throw Exception('La canción no se pudo descargar correctamente ($len bytes).');
     }
 
-    if (await file.exists()) {
-      try {
-        await file.delete();
-      } catch (_) {}
-    }
-    await tempFile.rename(targetPath);
-
-    return file;
+    throw Exception('No se pudo descargar el audio completo de la canción.');
   }
 
   static Future<int> _probeContentLength(String url) async {
     try {
-      final res = await http.head(Uri.parse(url)).timeout(const Duration(seconds: 4));
+      final res = await http.head(
+        Uri.parse(url),
+        headers: {'User-Agent': _userAgent},
+      ).timeout(const Duration(seconds: 4));
       return int.tryParse(res.headers['content-length'] ?? '') ?? 0;
     } catch (_) {
       return 0;

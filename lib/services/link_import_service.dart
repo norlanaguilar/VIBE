@@ -249,18 +249,19 @@ class LinkImportService {
     );
   }
 
-  /// Convierte una playlist completa en canciones de la biblioteca compartiendo la carátula
+  /// Convierte una playlist completa en canciones de la biblioteca
   static Future<List<Song>> playlistToSongs(PlaylistPreview p) async {
     final List<Song> result = [];
     String? sharedCover;
-    if (p.coverUrl != null && p.coverUrl!.isNotEmpty) {
+    // Únicamente los álbumes comparten la misma carátula para todas las pistas
+    if (p.type == LinkType.album && p.coverUrl != null && p.coverUrl!.isNotEmpty) {
       try {
         sharedCover = await AITaggerService.downloadAndSaveCover(
           p.coverUrl!,
           'pl_${p.title.hashCode.abs()}',
         );
       } catch (e) {
-        print('Error downloading playlist cover: $e');
+        print('Error downloading album cover: $e');
       }
     }
 
@@ -271,8 +272,8 @@ class LinkImportService {
           title: t.title,
           artist: t.artist,
           album: t.album ?? p.title,
-          coverUrl: t.coverUrl ?? p.coverUrl,
-          localCoverPath: sharedCover,
+          coverUrl: t.coverUrl,
+          localCoverPath: p.type == LinkType.album ? sharedCover : null,
           duration: t.duration,
           youtubeId: t.youtubeId,
           sourceUrl: t.sourceUrl ?? p.sourceUrl,
@@ -282,6 +283,36 @@ class LinkImportService {
       );
     }
     return result;
+  }
+
+  /// Obtiene la carátula oficial individual de una canción de Spotify o mediante iTunes
+  static Future<String?> fetchTrackCover({
+    required String artist,
+    required String title,
+    String? spotifyTrackId,
+  }) async {
+    if (spotifyTrackId != null && spotifyTrackId.isNotEmpty) {
+      try {
+        final res = await http.get(
+          Uri.parse('https://open.spotify.com/oembed?url=${Uri.encodeComponent('https://open.spotify.com/track/$spotifyTrackId')}'),
+          headers: {'User-Agent': _userAgent},
+        ).timeout(const Duration(seconds: 4));
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body);
+          final thumb = data['thumbnail_url'] as String?;
+          if (thumb != null && thumb.isNotEmpty) {
+            return thumb.replaceAll('ab67616d00001e02', 'ab67616d0000b273');
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Respaldo iTunes
+    try {
+      final meta = await _lookupItunes(artist, title, Duration.zero);
+      if (meta?.coverUrl != null) return meta!.coverUrl;
+    } catch (_) {}
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -581,7 +612,7 @@ class LinkImportService {
           artist: tArtist,
           album: isAlbum ? title : null,
           duration: Duration(milliseconds: ms),
-          coverUrl: coverUrl,
+          coverUrl: isAlbum ? coverUrl : null,
           sourceUrl: spotifyTrackId != null ? 'https://open.spotify.com/track/$spotifyTrackId' : link.url,
         ),
       );

@@ -196,12 +196,46 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                           tooltip: 'Eliminar Playlist',
                           onPressed: () async {
-                            await audioService.deletePlaylist(cleanName);
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Playlist "$cleanName" eliminada')),
-                              );
+                            final action = await showDialog<String>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: AppColors.surfaceContainerHigh,
+                                title: Text('Eliminar "$cleanName"', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                content: Text(
+                                  '¿Qué deseas hacer con la playlist "$cleanName" (${currentSongs.length} canciones)?',
+                                  style: const TextStyle(color: AppColors.onSurfaceVariant),
+                                ),
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text('Cancelar')),
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, 'only_playlist'),
+                                    child: const Text('Solo Playlist', style: TextStyle(color: AppColors.secondary)),
+                                  ),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                    onPressed: () => Navigator.pop(ctx, 'all'),
+                                    child: const Text('Playlist y Canciones', style: TextStyle(color: Colors.white)),
+                                  ),
+                                ],
+                              ),
+                            );
+
+                            if (action == 'all') {
+                              await audioService.deletePlaylistWithSongs(cleanName, deleteSongsFromLibrary: true);
+                              if (context.mounted) {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Playlist "$cleanName" y sus canciones eliminadas')),
+                                );
+                              }
+                            } else if (action == 'only_playlist') {
+                              await audioService.deletePlaylistWithSongs(cleanName, deleteSongsFromLibrary: false);
+                              if (context.mounted) {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Playlist "$cleanName" eliminada')),
+                                );
+                              }
                             }
                           },
                         ),
