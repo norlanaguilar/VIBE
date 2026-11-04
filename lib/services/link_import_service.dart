@@ -7,14 +7,25 @@ import 'ai_tagger_service.dart';
 
 enum LinkPlatform { youtube, spotify }
 
+enum LinkType { track, playlist, album }
+
 class ParsedLink {
   final LinkPlatform platform;
+  final LinkType type;
   final String id;
   final String url;
-  const ParsedLink(this.platform, this.id, this.url);
+
+  const ParsedLink(
+    this.platform,
+    this.id,
+    this.url, {
+    this.type = LinkType.track,
+  });
+
+  bool get isPlaylist => type == LinkType.playlist || type == LinkType.album;
 }
 
-/// Vista previa de la canción antes de agregarla a la biblioteca
+/// Vista previa de la canción individual antes de agregarla a la biblioteca
 class ImportPreview {
   final String title;
   final String artist;
@@ -43,39 +54,153 @@ class ImportPreview {
   String get songId => 'yt_$youtubeId';
 }
 
-/// Convierte un enlace de YouTube o Spotify en una canción en streaming con todos sus metadatos.
-///
-/// Spotify no permite transmitir su audio fuera de su app, así que de Spotify se toman
-/// los metadatos (título, artista, carátula, duración) y el audio se busca en YouTube.
+/// Elemento de una pista dentro de una playlist o álbum
+class PlaylistTrackPreview {
+  final String title;
+  final String artist;
+  final String? album;
+  final Duration duration;
+  final String? youtubeId;
+  final String? coverUrl;
+  final String? sourceUrl;
+
+  const PlaylistTrackPreview({
+    required this.title,
+    required this.artist,
+    this.album,
+    this.duration = Duration.zero,
+    this.youtubeId,
+    this.coverUrl,
+    this.sourceUrl,
+  });
+
+  String get songId => youtubeId != null
+      ? 'yt_$youtubeId'
+      : 'sp_${title.hashCode.abs()}_${artist.hashCode.abs()}';
+}
+
+/// Vista previa de una playlist o álbum completo
+class PlaylistPreview {
+  final String title;
+  final String author;
+  final String? coverUrl;
+  final LinkPlatform platform;
+  final LinkType type;
+  final String sourceUrl;
+  final List<PlaylistTrackPreview> tracks;
+
+  const PlaylistPreview({
+    required this.title,
+    required this.author,
+    this.coverUrl,
+    required this.platform,
+    required this.type,
+    required this.sourceUrl,
+    required this.tracks,
+  });
+
+  Duration get totalDuration =>
+      tracks.fold(Duration.zero, (prev, t) => prev + t.duration);
+}
+
+/// Resultado unificado de resolución de un enlace (canción o playlist/álbum)
+class ImportResult {
+  final ImportPreview? singleTrack;
+  final PlaylistPreview? playlist;
+
+  const ImportResult.track(ImportPreview this.singleTrack) : playlist = null;
+  const ImportResult.playlist(PlaylistPreview this.playlist) : singleTrack = null;
+
+  bool get isPlaylist => playlist != null;
+  bool get isSingleTrack => singleTrack != null;
+}
+
+/// Convierte un enlace de YouTube o Spotify (canción individual o playlist/álbum)
+/// en canciones en streaming con todos sus metadatos.
 class LinkImportService {
   static const _userAgent =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
   static final _spotifyTrack = RegExp(r'(?:open\.spotify\.com/(?:intl-[a-zA-Z-]+/)?track/|spotify:track:)([A-Za-z0-9]{22})');
+  static final _spotifyPlaylist = RegExp(r'(?:open\.spotify\.com/(?:intl-[a-zA-Z-]+/)?playlist/|spotify:playlist:)([A-Za-z0-9]{22})');
+  static final _spotifyAlbum = RegExp(r'(?:open\.spotify\.com/(?:intl-[a-zA-Z-]+/)?album/|spotify:album:)([A-Za-z0-9]{22})');
   static final _spotifyShort = RegExp(r'(?:spotify\.link|spotify\.app\.link)/[A-Za-z0-9]+');
-  static final _spotifyOther = RegExp(r'open\.spotify\.com/(?:intl-[a-zA-Z-]+/)?(album|playlist|artist|episode|show)/');
+  static final _youtubePlaylist = RegExp(r'[?&]list=([a-zA-Z0-9_-]+)');
 
-  /// Detecta la plataforma y el ID dentro del texto pegado
+  /// Detecta la plataforma, el tipo y el ID dentro del texto pegado
   static ParsedLink? parse(String input) {
     final text = input.trim();
     if (text.isEmpty) return null;
 
-    final sp = _spotifyTrack.firstMatch(text);
-    if (sp != null) {
-      return ParsedLink(LinkPlatform.spotify, sp.group(1)!, 'https://open.spotify.com/track/${sp.group(1)}');
+    // Spotify playlist
+    final spPlaylist = _spotifyPlaylist.firstMatch(text);
+    if (spPlaylist != null) {
+      return ParsedLink(
+        LinkPlatform.spotify,
+        spPlaylist.group(1)!,
+        'https://open.spotify.com/playlist/${spPlaylist.group(1)}',
+        type: LinkType.playlist,
+      );
+    }
+
+    // Spotify álbum
+    final spAlbum = _spotifyAlbum.firstMatch(text);
+    if (spAlbum != null) {
+      return ParsedLink(
+        LinkPlatform.spotify,
+        spAlbum.group(1)!,
+        'https://open.spotify.com/album/${spAlbum.group(1)}',
+        type: LinkType.album,
+      );
+    }
+
+    // Spotify canción individual
+    final spTrack = _spotifyTrack.firstMatch(text);
+    if (spTrack != null) {
+      return ParsedLink(
+        LinkPlatform.spotify,
+        spTrack.group(1)!,
+        'https://open.spotify.com/track/${spTrack.group(1)}',
+        type: LinkType.track,
+      );
     }
 
     final urlMatch = RegExp(r'https?://\S+').firstMatch(text);
     final candidate = urlMatch?.group(0) ?? text;
+
+    // YouTube playlist
+    final ytListMatch = _youtubePlaylist.firstMatch(candidate);
+    if (ytListMatch != null) {
+      final listId = ytListMatch.group(1)!;
+      if (candidate.contains('/playlist') ||
+          listId.startsWith('PL') ||
+          listId.startsWith('OLAK5uy_') ||
+          !candidate.contains('watch?v=')) {
+        return ParsedLink(
+          LinkPlatform.youtube,
+          listId,
+          'https://www.youtube.com/playlist?list=$listId',
+          type: LinkType.playlist,
+        );
+      }
+    }
+
+    // YouTube video individual
     final ytId = VideoId.parseVideoId(candidate);
     if (ytId != null) {
-      return ParsedLink(LinkPlatform.youtube, ytId, 'https://www.youtube.com/watch?v=$ytId');
+      return ParsedLink(
+        LinkPlatform.youtube,
+        ytId,
+        'https://www.youtube.com/watch?v=$ytId',
+        type: LinkType.track,
+      );
     }
+
     return null;
   }
 
-  /// Resuelve el enlace a una vista previa con metadatos completos
-  static Future<ImportPreview> resolve(String input) async {
+  /// Resuelve el enlace (canción o playlist) a una vista previa con metadatos completos
+  static Future<ImportResult> resolve(String input) async {
     var parsed = parse(input);
 
     // Enlaces cortos de compartir de Spotify (spotify.link/xxxx)
@@ -85,19 +210,26 @@ class LinkImportService {
     }
 
     if (parsed == null) {
-      if (_spotifyOther.hasMatch(input)) {
-        throw const FormatException('Por ahora solo se pueden agregar canciones individuales de Spotify (no álbumes ni playlists).');
-      }
-      throw const FormatException('El enlace no es de YouTube ni de Spotify.');
+      throw const FormatException('El enlace no es de YouTube ni de Spotify válido.');
     }
 
-    return parsed.platform == LinkPlatform.youtube ? _resolveYouTube(parsed) : _resolveSpotify(parsed);
+    if (parsed.isPlaylist) {
+      final playlist = parsed.platform == LinkPlatform.youtube
+          ? await _resolveYouTubePlaylist(parsed)
+          : await _resolveSpotifyPlaylistOrAlbum(parsed);
+      return ImportResult.playlist(playlist);
+    } else {
+      final track = parsed.platform == LinkPlatform.youtube
+          ? await _resolveYouTube(parsed)
+          : await _resolveSpotify(parsed);
+      return ImportResult.track(track);
+    }
   }
 
-  /// Convierte la vista previa en una canción de la biblioteca (descarga la carátula para uso sin conexión)
+  /// Convierte la vista previa individual en una canción de la biblioteca
   static Future<Song> toSong(ImportPreview p) async {
     String? localCover;
-    if (p.coverUrl != null) {
+    if (p.coverUrl != null && p.coverUrl!.isNotEmpty) {
       localCover = await AITaggerService.downloadAndSaveCover(p.coverUrl!, p.songId);
     }
     return Song(
@@ -117,8 +249,43 @@ class LinkImportService {
     );
   }
 
+  /// Convierte una playlist completa en canciones de la biblioteca compartiendo la carátula
+  static Future<List<Song>> playlistToSongs(PlaylistPreview p) async {
+    final List<Song> result = [];
+    String? sharedCover;
+    if (p.coverUrl != null && p.coverUrl!.isNotEmpty) {
+      try {
+        sharedCover = await AITaggerService.downloadAndSaveCover(
+          p.coverUrl!,
+          'pl_${p.title.hashCode.abs()}',
+        );
+      } catch (e) {
+        print('Error downloading playlist cover: $e');
+      }
+    }
+
+    for (final t in p.tracks) {
+      result.add(
+        Song(
+          id: t.songId,
+          title: t.title,
+          artist: t.artist,
+          album: t.album ?? p.title,
+          coverUrl: t.coverUrl ?? p.coverUrl,
+          localCoverPath: sharedCover,
+          duration: t.duration,
+          youtubeId: t.youtubeId,
+          sourceUrl: t.sourceUrl ?? p.sourceUrl,
+          source: p.platform == LinkPlatform.spotify ? 'spotify' : 'youtube',
+          isDownloaded: false,
+        ),
+      );
+    }
+    return result;
+  }
+
   // ---------------------------------------------------------------------------
-  // YouTube
+  // YouTube Video Individual
   // ---------------------------------------------------------------------------
 
   static Future<ImportPreview> _resolveYouTube(ParsedLink link) async {
@@ -149,7 +316,158 @@ class LinkImportService {
   }
 
   // ---------------------------------------------------------------------------
-  // Spotify
+  // YouTube Playlist
+  // ---------------------------------------------------------------------------
+
+  static Future<PlaylistPreview> _resolveYouTubePlaylist(ParsedLink link) async {
+    final playlistUrl = 'https://www.youtube.com/playlist?list=${link.id}';
+    final res = await http.get(
+      Uri.parse(playlistUrl),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8',
+      },
+    ).timeout(const Duration(seconds: 15));
+
+    if (res.statusCode != 200) {
+      throw Exception('No se pudo acceder a la playlist de YouTube (código ${res.statusCode}).');
+    }
+
+    final m = RegExp(r'var ytInitialData = ({.+?});</script>', dotAll: true).firstMatch(res.body);
+    if (m == null) {
+      throw Exception('No se pudo leer la información de la playlist de YouTube.');
+    }
+
+    final data = json.decode(m.group(1)!);
+    final meta = data['metadata']?['playlistMetadataRenderer'];
+    final title = (meta?['title'] as String?) ?? 'Playlist de YouTube';
+
+    final header = data['header']?['playlistHeaderRenderer'];
+    String author = '';
+    if (header?['ownerText']?['runs'] is List && (header['ownerText']['runs'] as List).isNotEmpty) {
+      author = (header['ownerText']['runs'][0]['text'] as String?) ?? '';
+    }
+
+    String? coverUrl;
+    final twoCol = data['contents']?['twoColumnBrowseResultsRenderer'];
+    final tabs = twoCol?['tabs'] as List?;
+    final sectionList = tabs?[0]?['tabRenderer']?['content']?['sectionListRenderer'];
+    final itemSection = (sectionList?['contents'] as List?)?[0]?['itemSectionRenderer'];
+    final contents = (itemSection?['contents'] as List?) ?? [];
+
+    final List<PlaylistTrackPreview> tracks = [];
+
+    for (final item in contents) {
+      if (item is! Map) continue;
+
+      // Estructura 1: lockupViewModel
+      final lockup = item['lockupViewModel'];
+      if (lockup != null) {
+        final videoId = lockup['contentId'] as String?;
+        if (videoId == null || videoId.isEmpty) continue;
+
+        final metadata = lockup['metadata']?['lockupMetadataViewModel'];
+        final rawTitle = (metadata?['title']?['content'] as String?) ?? '';
+        if (rawTitle.isEmpty) continue;
+
+        final snippet = metadata?['metadata']?['contentMetadataViewModel'];
+        final metadataRows = snippet?['metadataRows'] as List?;
+        String videoArtist = '';
+        if (metadataRows != null && metadataRows.isNotEmpty) {
+          final parts = metadataRows[0]?['metadataParts'] as List?;
+          if (parts != null && parts.isNotEmpty) {
+            videoArtist = (parts[0]?['text']?['content'] as String?) ?? '';
+          }
+        }
+
+        final guess = _splitArtistTitle(rawTitle, videoArtist.isNotEmpty ? videoArtist : author);
+
+        String? durText;
+        final overlays = lockup['contentImage']?['thumbnailViewModel']?['overlays'] as List?;
+        if (overlays != null) {
+          for (final o in overlays) {
+            final badges = o['thumbnailBottomOverlayViewModel']?['badges'] as List?;
+            if (badges != null && badges.isNotEmpty) {
+              durText = badges[0]?['thumbnailBadgeViewModel']?['text'] as String?;
+              if (durText != null) break;
+            }
+          }
+        }
+
+        final duration = _parseClockDuration(durText);
+        final trackCover = 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
+        coverUrl ??= trackCover;
+
+        tracks.add(
+          PlaylistTrackPreview(
+            title: guess.title,
+            artist: guess.artist,
+            album: title,
+            duration: duration,
+            youtubeId: videoId,
+            coverUrl: trackCover,
+            sourceUrl: 'https://www.youtube.com/watch?v=$videoId',
+          ),
+        );
+        continue;
+      }
+
+      // Estructura 2: playlistVideoRenderer
+      final pvr = item['playlistVideoRenderer'];
+      if (pvr != null) {
+        final videoId = pvr['videoId'] as String?;
+        if (videoId == null || videoId.isEmpty) continue;
+
+        String rawTitle = '';
+        if (pvr['title']?['runs'] is List && (pvr['title']['runs'] as List).isNotEmpty) {
+          rawTitle = pvr['title']['runs'][0]['text'] ?? '';
+        } else if (pvr['title']?['simpleText'] != null) {
+          rawTitle = pvr['title']['simpleText'];
+        }
+        if (rawTitle.isEmpty || rawTitle == '[Deleted video]' || rawTitle == '[Private video]') continue;
+
+        String videoArtist = '';
+        if (pvr['shortBylineText']?['runs'] is List && (pvr['shortBylineText']['runs'] as List).isNotEmpty) {
+          videoArtist = pvr['shortBylineText']['runs'][0]['text'] ?? '';
+        }
+
+        final guess = _splitArtistTitle(rawTitle, videoArtist.isNotEmpty ? videoArtist : author);
+        final durText = pvr['lengthText']?['simpleText'] as String?;
+        final duration = _parseClockDuration(durText);
+        final trackCover = 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
+        coverUrl ??= trackCover;
+
+        tracks.add(
+          PlaylistTrackPreview(
+            title: guess.title,
+            artist: guess.artist,
+            album: title,
+            duration: duration,
+            youtubeId: videoId,
+            coverUrl: trackCover,
+            sourceUrl: 'https://www.youtube.com/watch?v=$videoId',
+          ),
+        );
+      }
+    }
+
+    if (tracks.isEmpty) {
+      throw Exception('No se encontraron canciones disponibles en la playlist de YouTube.');
+    }
+
+    return PlaylistPreview(
+      title: title,
+      author: author.isNotEmpty ? author : 'YouTube',
+      coverUrl: coverUrl,
+      platform: LinkPlatform.youtube,
+      type: LinkType.playlist,
+      sourceUrl: link.url,
+      tracks: tracks,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Spotify Canción Individual
   // ---------------------------------------------------------------------------
 
   static Future<ImportPreview> _resolveSpotify(ParsedLink link) async {
@@ -158,7 +476,7 @@ class LinkImportService {
       throw Exception('No se pudo leer la información de la canción en Spotify.');
     }
 
-    final videoId = await _findOnYouTube(track.artist, track.title, track.duration);
+    final videoId = await findOnYouTube(track.artist, track.title, track.duration);
     if (videoId == null) {
       throw Exception('No se encontró el audio de "${track.title}" en YouTube.');
     }
@@ -179,8 +497,113 @@ class LinkImportService {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Spotify Playlist o Álbum
+  // ---------------------------------------------------------------------------
+
+  static Future<PlaylistPreview> _resolveSpotifyPlaylistOrAlbum(ParsedLink link) async {
+    final isAlbum = link.type == LinkType.album;
+    final url = 'https://open.spotify.com/embed/${isAlbum ? 'album' : 'playlist'}/${link.id}';
+    final res = await http.get(
+      Uri.parse(url),
+      headers: {
+        'User-Agent': _userAgent,
+        'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8',
+      },
+    ).timeout(const Duration(seconds: 12));
+
+    if (res.statusCode != 200) {
+      throw Exception('No se pudo cargar el ${isAlbum ? 'álbum' : 'playlist'} de Spotify.');
+    }
+
+    final m = RegExp(r'<script id="__NEXT_DATA__" type="application/json">(.+?)</script>', dotAll: true).firstMatch(res.body);
+    if (m == null) {
+      throw Exception('Formato no reconocido en Spotify.');
+    }
+
+    final data = json.decode(m.group(1)!);
+    final entity = data['props']?['pageProps']?['state']?['data']?['entity'] ??
+        data['props']?['pageProps']?['state']?['data']?['playlist'] ??
+        data['props']?['pageProps']?['state']?['data']?['album'];
+
+    if (entity == null) {
+      throw Exception('No se encontraron canciones en el enlace de Spotify.');
+    }
+
+    final title = (entity['name'] ?? entity['title'] ?? (isAlbum ? 'Álbum de Spotify' : 'Playlist de Spotify')) as String;
+
+    String author = '';
+    if (entity['owner'] != null && entity['owner']['name'] != null) {
+      author = entity['owner']['name'] as String;
+    } else if (entity['subtitle'] != null) {
+      author = entity['subtitle'] as String;
+    } else if (entity['artists'] is List && (entity['artists'] as List).isNotEmpty) {
+      author = (entity['artists'] as List).map((a) => a['name']).whereType<String>().join(', ');
+    }
+
+    String? coverUrl;
+    final coverArtSources = entity['coverArt']?['sources'] as List?;
+    if (coverArtSources != null && coverArtSources.isNotEmpty) {
+      coverUrl = coverArtSources[0]['url'] as String?;
+    } else {
+      final viImages = entity['visualIdentity']?['image'] as List?;
+      if (viImages != null && viImages.isNotEmpty) {
+        coverUrl = (viImages.last['url'] ?? viImages.first['url']) as String?;
+      }
+    }
+
+    final rawTracks = (entity['trackList'] as List?) ?? [];
+    final List<PlaylistTrackPreview> tracks = [];
+
+    for (final t in rawTracks) {
+      if (t is! Map) continue;
+      final tTitle = (t['title'] ?? t['name']) as String?;
+      if (tTitle == null || tTitle.isEmpty) continue;
+
+      String tArtist = '';
+      if (t['subtitle'] != null) {
+        tArtist = t['subtitle'] as String;
+      } else if (t['artists'] is List && (t['artists'] as List).isNotEmpty) {
+        tArtist = (t['artists'] as List).map((a) => a['name']).whereType<String>().join(', ');
+      }
+      if (tArtist.isEmpty) tArtist = author;
+
+      final ms = (t['duration'] is int)
+          ? t['duration'] as int
+          : (t['duration'] is Map ? (t['duration']['totalMilliseconds'] as int? ?? 0) : 0);
+
+      final uri = t['uri'] as String? ?? '';
+      final spotifyTrackId = uri.startsWith('spotify:track:') ? uri.replaceFirst('spotify:track:', '') : null;
+
+      tracks.add(
+        PlaylistTrackPreview(
+          title: tTitle,
+          artist: tArtist,
+          album: isAlbum ? title : null,
+          duration: Duration(milliseconds: ms),
+          coverUrl: coverUrl,
+          sourceUrl: spotifyTrackId != null ? 'https://open.spotify.com/track/$spotifyTrackId' : link.url,
+        ),
+      );
+    }
+
+    if (tracks.isEmpty) {
+      throw Exception('La playlist o álbum no contiene canciones disponibles.');
+    }
+
+    return PlaylistPreview(
+      title: title,
+      author: author.isNotEmpty ? author : (isAlbum ? 'Varios artistas' : 'Spotify'),
+      coverUrl: coverUrl,
+      platform: LinkPlatform.spotify,
+      type: link.type,
+      sourceUrl: link.url,
+      tracks: tracks,
+    );
+  }
+
   static Future<_TrackMeta?> _fetchSpotifyTrack(String id) async {
-    // 1) Página pública del reproductor embebido: trae título, artistas, duración y carátula
+    // 1) Página pública del reproductor embebido
     try {
       final res = await http.get(
         Uri.parse('https://open.spotify.com/embed/track/$id'),
@@ -233,7 +656,7 @@ class LinkImportService {
       print('Spotify embed error: $e');
     }
 
-    // 2) Respaldo: oEmbed oficial (solo título y carátula) + búsqueda en iTunes para el artista
+    // 2) Respaldo: oEmbed oficial + búsqueda en iTunes
     try {
       final res = await http.get(
         Uri.parse('https://open.spotify.com/oembed?url=${Uri.encodeComponent('https://open.spotify.com/track/$id')}'),
@@ -259,7 +682,6 @@ class LinkImportService {
     return null;
   }
 
-  /// Busca recursivamente el objeto de la pista dentro del JSON de la página
   static Map<String, dynamic>? _findTrackEntity(dynamic node) {
     if (node is Map<String, dynamic>) {
       if ((node['type'] == 'track' || node['uri']?.toString().startsWith('spotify:track:') == true) &&
@@ -293,12 +715,14 @@ class LinkImportService {
         if (location != null) {
           await res.drain<void>();
           current = current.resolve(location);
-          if (_spotifyTrack.hasMatch(current.toString())) return current.toString();
+          if (parse(current.toString()) != null) return current.toString();
           continue;
         }
         final body = await res.transform(utf8.decoder).join();
-        final m = _spotifyTrack.firstMatch(body);
-        return m != null ? 'https://open.spotify.com/track/${m.group(1)}' : null;
+        final m = _spotifyTrack.firstMatch(body) ??
+            _spotifyPlaylist.firstMatch(body) ??
+            _spotifyAlbum.firstMatch(body);
+        return m != null ? m.group(0) : null;
       }
     } catch (e) {
       print('Short link error: $e');
@@ -308,8 +732,8 @@ class LinkImportService {
     return null;
   }
 
-  /// Busca en YouTube el audio que mejor coincide con la pista (por título, artista y duración)
-  static Future<String?> _findOnYouTube(String artist, String title, Duration duration) async {
+  /// Busca en YouTube el video que mejor coincide con la pista
+  static Future<String?> findOnYouTube(String artist, String title, Duration duration) async {
     final yt = YoutubeExplode();
     try {
       final results = await yt.search.search('$artist $title audio').timeout(const Duration(seconds: 15));
@@ -317,9 +741,20 @@ class LinkImportService {
 
       final wantTitle = _normalize(title);
       final wantArtist = _normalize(artist.split(',').first);
-      final penalized = ['live', 'en vivo', 'cover', 'karaoke', 'remix', 'sped up', 'slowed', '8d', 'instrumental', 'reaction', 'tutorial', 'nightcore']
-          .where((w) => !wantTitle.contains(w))
-          .toList();
+      final penalized = [
+        'live',
+        'en vivo',
+        'cover',
+        'karaoke',
+        'remix',
+        'sped up',
+        'slowed',
+        '8d',
+        'instrumental',
+        'reaction',
+        'tutorial',
+        'nightcore'
+      ].where((w) => !wantTitle.contains(w)).toList();
 
       Video? best;
       var bestScore = -1e9;
@@ -366,7 +801,7 @@ class LinkImportService {
   }
 
   // ---------------------------------------------------------------------------
-  // Metadatos (iTunes Search API, pública y sin clave)
+  // Metadatos (iTunes Search API)
   // ---------------------------------------------------------------------------
 
   static Future<_TrackMeta?> _lookupItunes(String artist, String title, Duration duration) async {
@@ -409,7 +844,6 @@ class LinkImportService {
     return null;
   }
 
-  /// Separa "Artista - Canción (Official Video)" en artista y título limpios
   static ({String artist, String title}) _splitArtistTitle(String rawTitle, String author) {
     var title = rawTitle
         .replaceAll(RegExp(r'\((?:[^)]*(?:official|oficial|video|audio|lyric|letra|visualizer|hd|4k|mv)[^)]*)\)', caseSensitive: false), '')
@@ -425,6 +859,22 @@ class LinkImportService {
       title = title.substring(dash.end).trim();
     }
     return (artist: artist, title: title);
+  }
+
+  static Duration _parseClockDuration(String? text) {
+    if (text == null || text.trim().isEmpty) return Duration.zero;
+    final parts = text.trim().split(':');
+    if (parts.length == 2) {
+      final m = int.tryParse(parts[0]) ?? 0;
+      final s = int.tryParse(parts[1]) ?? 0;
+      return Duration(minutes: m, seconds: s);
+    } else if (parts.length == 3) {
+      final h = int.tryParse(parts[0]) ?? 0;
+      final m = int.tryParse(parts[1]) ?? 0;
+      final s = int.tryParse(parts[2]) ?? 0;
+      return Duration(hours: h, minutes: m, seconds: s);
+    }
+    return Duration.zero;
   }
 
   static String _normalize(String s) {

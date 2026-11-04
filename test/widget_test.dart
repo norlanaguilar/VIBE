@@ -28,5 +28,21 @@ void main() {
     final sp = LinkImportService.parse('https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT');
     expect(sp?.platform, equals(LinkPlatform.spotify));
     expect(sp?.id, equals('4cOdK2wGLETKBW3PvgPWqT'));
+    expect(sp?.type, equals(LinkType.track));
+
+    final spPlaylist = LinkImportService.parse('https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M');
+    expect(spPlaylist?.platform, equals(LinkPlatform.spotify));
+    expect(spPlaylist?.type, equals(LinkType.playlist));
+    expect(spPlaylist?.isPlaylist, isTrue);
+
+    final spAlbum = LinkImportService.parse('https://open.spotify.com/album/4m2880jivSbbyEGAKfITCa');
+    expect(spAlbum?.platform, equals(LinkPlatform.spotify));
+    expect(spAlbum?.type, equals(LinkType.album));
+    expect(spAlbum?.isPlaylist, isTrue);
+
+    final ytPlaylist = LinkImportService.parse('https://www.youtube.com/playlist?list=PLMC9KNkIncKtPzgY-5rmhvj7fax8fdxoj');
+    expect(ytPlaylist?.platform, equals(LinkPlatform.youtube));
+    expect(ytPlaylist?.type, equals(LinkType.playlist));
+    expect(ytPlaylist?.isPlaylist, isTrue);
   });
 }

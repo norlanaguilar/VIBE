@@ -21,8 +21,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   final FocusNode _focusNode = FocusNode();
 
   bool _isLoading = false;
+  bool _isAddingPlaylist = false;
+  bool _showAllPlaylistTracks = false;
   String? _errorMessage;
-  ImportPreview? _preview;
+  ImportResult? _previewResult;
   ParsedLink? _detectedLink;
 
   @override
@@ -38,8 +40,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       setState(() {
         _detectedLink = parsed;
         if (text.isEmpty) {
-          _preview = null;
+          _previewResult = null;
           _errorMessage = null;
+          _showAllPlaylistTracks = false;
         }
       });
     }
@@ -61,14 +64,15 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
-      _preview = null;
+      _previewResult = null;
+      _showAllPlaylistTracks = false;
     });
 
     try {
-      final preview = await LinkImportService.resolve(text);
+      final result = await LinkImportService.resolve(text);
       if (mounted) {
         setState(() {
-          _preview = preview;
+          _previewResult = result;
           _isLoading = false;
         });
       }
@@ -97,7 +101,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    '¡"${song.title}" agregada a tu biblioteca!',
+                    '"${song.title}" agregada a tu biblioteca',
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -123,11 +127,89 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     }
   }
 
+  Future<void> _addPlaylistToLibrary(
+    AudioPlayerService audioService,
+    PlaylistPreview playlist, {
+    bool playImmediately = false,
+  }) async {
+    setState(() {
+      _isAddingPlaylist = true;
+    });
+
+    try {
+      final songs = await LinkImportService.playlistToSongs(playlist);
+
+      if (playImmediately && songs.isNotEmpty && songs.first.youtubeId == null) {
+        final ytId = await LinkImportService.findOnYouTube(
+          songs.first.artist,
+          songs.first.title,
+          songs.first.duration,
+        );
+        if (ytId != null) {
+          songs[0] = songs.first.copyWith(youtubeId: ytId);
+        }
+      }
+
+      await audioService.addSongs(songs, targetPlaylist: playlist.title);
+
+      if (mounted) {
+        final typeLabel = playlist.type == LinkType.album ? 'Álbum' : 'Playlist';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppColors.primaryContainer,
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '$typeLabel "${playlist.title}" agregado (${songs.length} canciones)',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+
+      if (playImmediately && songs.isNotEmpty) {
+        await audioService.playPlaylist(songs, songs.first);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Error al guardar: $e'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAddingPlaylist = false;
+        });
+      }
+    }
+  }
+
   String _formatDuration(Duration duration) {
     if (duration == Duration.zero) return '--:--';
     final minutes = duration.inMinutes;
     final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
+  }
+
+  String _formatPlaylistDuration(Duration duration) {
+    if (duration == Duration.zero) return '';
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes % 60;
+    if (hours > 0) {
+      return '$hours h ${minutes > 0 ? '$minutes min' : ''}'.trim();
+    }
+    return '$minutes min';
   }
 
   @override
@@ -219,9 +301,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                                   onPressed: () {
                                     _urlController.clear();
                                     setState(() {
-                                      _preview = null;
+                                      _previewResult = null;
                                       _errorMessage = null;
                                       _detectedLink = null;
+                                      _showAllPlaylistTracks = false;
                                     });
                                   },
                                 ),
@@ -282,9 +365,12 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                     ],
 
                     // Preview Card
-                    if (_preview != null) ...[
+                    if (_previewResult != null) ...[
                       const SizedBox(height: 16),
-                      _buildPreviewCard(context, audioService, _preview!),
+                      if (_previewResult!.isPlaylist)
+                        _buildPlaylistPreviewCard(context, audioService, _previewResult!.playlist!)
+                      else if (_previewResult!.isSingleTrack)
+                        _buildPreviewCard(context, audioService, _previewResult!.singleTrack!),
                     ],
                   ],
                 ),
@@ -557,7 +643,16 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
     final isSpotify = link.platform == LinkPlatform.spotify;
     final color = isSpotify ? const Color(0xFF1DB954) : const Color(0xFFFF0000);
-    final text = isSpotify ? 'Spotify' : 'YouTube';
+
+    String label = isSpotify ? 'Spotify' : 'YouTube';
+    IconData icon = isSpotify ? Icons.graphic_eq : Icons.play_arrow;
+    if (link.type == LinkType.playlist) {
+      label = isSpotify ? 'Spotify Playlist' : 'YouTube Playlist';
+      icon = Icons.playlist_play;
+    } else if (link.type == LinkType.album) {
+      label = 'Spotify Álbum';
+      icon = Icons.album;
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -569,10 +664,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(isSpotify ? Icons.graphic_eq : Icons.play_arrow, size: 14, color: color),
+          Icon(icon, size: 14, color: color),
           const SizedBox(width: 4),
           Text(
-            text,
+            label,
             style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold),
           ),
         ],
@@ -732,6 +827,269 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                   onPressed: () => _addSongToLibrary(audioService, preview, playImmediately: true),
+                  icon: const Icon(Icons.play_arrow, size: 20),
+                  label: const Text(
+                    'Reproducir',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaylistPreviewCard(
+    BuildContext context,
+    AudioPlayerService audioService,
+    PlaylistPreview playlist,
+  ) {
+    final isAlbum = playlist.type == LinkType.album;
+    final isSpotify = playlist.platform == LinkPlatform.spotify;
+    final primaryColor = isSpotify ? const Color(0xFF1DB954) : const Color(0xFFFF0000);
+    final count = playlist.tracks.length;
+    final durationStr = _formatPlaylistDuration(playlist.totalDuration);
+    final displayedTracks = _showAllPlaylistTracks ? playlist.tracks : playlist.tracks.take(6).toList();
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            primaryColor.withOpacity(0.18),
+            AppColors.surfaceContainerHigh.withOpacity(0.95),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: primaryColor.withOpacity(0.4), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: primaryColor.withOpacity(0.15),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 96,
+                  height: 96,
+                  child: playlist.coverUrl != null
+                      ? Image.network(
+                          playlist.coverUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => _coverPlaceholder(),
+                        )
+                      : _coverPlaceholder(),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildPlatformBadge(
+                      ParsedLink(
+                        playlist.platform,
+                        '',
+                        playlist.sourceUrl,
+                        type: playlist.type,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      playlist.title,
+                      style: AppTypography.headlineSm.copyWith(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      playlist.author,
+                      style: AppTypography.bodyLg.copyWith(
+                        color: AppColors.secondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      durationStr.isNotEmpty ? '$count canciones • $durationStr' : '$count canciones',
+                      style: AppTypography.bodySm.copyWith(
+                        color: AppColors.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Divider(height: 1, color: AppColors.outlineVariant),
+          const SizedBox(height: 12),
+          Text(
+            'Canciones (${playlist.tracks.length}):',
+            style: AppTypography.bodySm.copyWith(
+              color: AppColors.onSurfaceVariant,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...displayedTracks.asMap().entries.map((entry) {
+            final idx = entry.key + 1;
+            final t = entry.value;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4.0),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 24,
+                    child: Text(
+                      '$idx',
+                      style: AppTypography.monoLabel.copyWith(
+                        color: AppColors.onSurfaceVariant.withOpacity(0.7),
+                        fontSize: 11,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          t.title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          t.artist,
+                          style: TextStyle(
+                            color: AppColors.onSurfaceVariant.withOpacity(0.8),
+                            fontSize: 11,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _formatDuration(t.duration),
+                    style: AppTypography.monoLabel.copyWith(
+                      color: AppColors.onSurfaceVariant.withOpacity(0.7),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          if (playlist.tracks.length > 6) ...[
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: () {
+                setState(() {
+                  _showAllPlaylistTracks = !_showAllPlaylistTracks;
+                });
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      _showAllPlaylistTracks
+                          ? 'Mostrar menos'
+                          : 'Ver las ${playlist.tracks.length} canciones',
+                      style: TextStyle(
+                        color: primaryColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      _showAllPlaylistTracks ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                      size: 16,
+                      color: primaryColor,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    elevation: 4,
+                  ),
+                  onPressed: _isAddingPlaylist
+                      ? null
+                      : () => _addPlaylistToLibrary(audioService, playlist),
+                  icon: _isAddingPlaylist
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.playlist_add, size: 20),
+                  label: Text(
+                    _isAddingPlaylist
+                        ? 'Guardando...'
+                        : (isAlbum ? 'Guardar Álbum' : 'Guardar Playlist'),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.secondary,
+                    side: const BorderSide(color: AppColors.secondary),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  onPressed: _isAddingPlaylist
+                      ? null
+                      : () => _addPlaylistToLibrary(audioService, playlist, playImmediately: true),
                   icon: const Icon(Icons.play_arrow, size: 20),
                   label: const Text(
                     'Reproducir',

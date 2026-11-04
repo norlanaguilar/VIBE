@@ -17,6 +17,7 @@ import 'home_widget_bridge.dart';
 import 'spectrum_service.dart';
 import 'vibe_audio_handler.dart';
 import 'youtube_stream_resolver.dart';
+import 'link_import_service.dart';
 
 class AudioPlayerService extends ChangeNotifier {
   final VibeAudioHandler _handler;
@@ -564,6 +565,38 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
+  /// Agrega múltiples canciones en lote a la biblioteca y opcionalmente a una playlist
+  Future<void> addSongs(List<Song> songs, {String? targetPlaylist}) async {
+    for (final song in songs) {
+      _librarySongs.removeWhere((s) =>
+          s.id == song.id || (song.localAudioPath != null && s.localAudioPath == song.localAudioPath));
+      _librarySongs.insert(0, song);
+    }
+    if (_currentSong == null && songs.isNotEmpty) {
+      _currentSong = songs.first;
+      if (songs.first.duration > Duration.zero) {
+        _duration = songs.first.duration;
+      }
+    }
+    if (targetPlaylist != null && targetPlaylist.trim().isNotEmpty) {
+      final name = targetPlaylist.trim();
+      _userPlaylists.putIfAbsent(name, () => []);
+      for (final song in songs) {
+        if (!_userPlaylists[name]!.contains(song.id)) {
+          _userPlaylists[name]!.add(song.id);
+        }
+      }
+      await _savePlaylistsCache();
+    }
+    await _saveMetadataCache();
+    notifyListeners();
+
+    // Precargar la primera canción en segundo plano para reproducción instantánea si el usuario le da play
+    if (songs.isNotEmpty && songs.first.youtubeId != null) {
+      _preloadSongInBackground(songs.first);
+    }
+  }
+
   /// Descarga el audio en segundo plano de forma silenciosa e instantánea
   Future<void> _preloadSongInBackground(Song song) async {
     if (song.youtubeId == null) return;
@@ -720,7 +753,7 @@ class AudioPlayerService extends ChangeNotifier {
       }
 
       if (!playedFromLocal) {
-        if (song.youtubeId != null) {
+        if (song.youtubeId != null || song.source == 'spotify' || song.isImported) {
           await _playStreaming(song, mediaItem, token);
         } else if (song.audioUrl != null) {
           await _handler.loadAndPlay(mediaItem, AudioSource.uri(Uri.parse(song.audioUrl!), tag: mediaItem));
@@ -752,7 +785,26 @@ class AudioPlayerService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final cachedFile = await YouTubeStreamResolver.getOrDownloadStreamAudio(song.youtubeId!);
+      String? ytId = song.youtubeId;
+      if (ytId == null || ytId.isEmpty) {
+        ytId = await LinkImportService.findOnYouTube(song.artist, song.title, song.duration);
+        if (token != _playToken) return;
+        if (ytId == null || ytId.isEmpty) {
+          throw Exception('No se encontró el audio de "${song.title}" en YouTube');
+        }
+        final withYt = song.copyWith(youtubeId: ytId);
+        final idx = _librarySongs.indexWhere((s) => s.id == song.id);
+        if (idx != -1) {
+          _librarySongs[idx] = withYt;
+        }
+        if (_currentSong?.id == song.id) {
+          _currentSong = withYt;
+        }
+        unawaited(_saveMetadataCache());
+        song = withYt;
+      }
+
+      final cachedFile = await YouTubeStreamResolver.getOrDownloadStreamAudio(ytId);
       if (token != _playToken) return; // El usuario ya cambió de canción
 
       // Actualizar automáticamente la ruta local para que quede guardada y funcione sin internet
