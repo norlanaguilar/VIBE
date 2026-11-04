@@ -1004,9 +1004,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           value: 'ai',
                           child: Row(
                             children: [
-                              Icon(Icons.auto_awesome, color: AppColors.secondary),
+                              Icon(Icons.manage_search, color: AppColors.secondary),
                               SizedBox(width: 8),
-                              Text('Identificar con IA'),
+                              Text('Identificar'),
                             ],
                           ),
                         ),

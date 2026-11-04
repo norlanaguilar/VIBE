@@ -136,7 +136,7 @@ class LinkImportService {
         artist: meta?.artist ?? guess.artist,
         album: meta?.album ?? 'YouTube',
         coverUrl: meta?.coverUrl ?? video.thumbnails.highResUrl,
-        duration: duration,
+        duration: (meta != null && meta.duration > Duration.zero) ? meta.duration : duration,
         youtubeId: video.id.value,
         sourceUrl: link.url,
         platform: LinkPlatform.youtube,
@@ -170,7 +170,7 @@ class LinkImportService {
       artist: track.artist,
       album: track.album ?? meta?.album ?? 'Spotify',
       coverUrl: track.coverUrl ?? meta?.coverUrl,
-      duration: track.duration,
+      duration: track.duration > Duration.zero ? track.duration : (meta?.duration ?? Duration.zero),
       youtubeId: videoId,
       sourceUrl: link.url,
       platform: LinkPlatform.spotify,
@@ -248,7 +248,7 @@ class LinkImportService {
             artist: meta?.artist ?? '',
             album: meta?.album,
             coverUrl: data['thumbnail_url'] as String? ?? meta?.coverUrl,
-            duration: Duration.zero,
+            duration: meta?.duration ?? Duration.zero,
             year: meta?.year,
           );
         }
@@ -388,7 +388,7 @@ class LinkImportService {
         final titleOk = rt.isNotEmpty && (wantTitle.contains(rt) || rt.contains(wantTitle));
         final artistOk = wantArtist.isEmpty || ra.contains(wantArtist) || wantArtist.contains(ra);
         final ms = r['trackTimeMillis'] as int?;
-        final durationOk = duration == Duration.zero || ms == null || (ms ~/ 1000 - duration.inSeconds).abs() <= 12;
+        final durationOk = duration == Duration.zero || ms == null || (ms ~/ 1000 - duration.inSeconds).abs() <= 30;
 
         if (titleOk && artistOk && durationOk) {
           final release = r['releaseDate'] as String?;

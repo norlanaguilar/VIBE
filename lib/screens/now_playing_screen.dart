@@ -250,9 +250,9 @@ class NowPlayingScreen extends StatelessWidget {
                             value: 'ai_tag',
                             child: Row(
                               children: [
-                                const Icon(Icons.auto_awesome, color: AppColors.secondary, size: 20),
+                                const Icon(Icons.manage_search, color: AppColors.secondary, size: 20),
                                 const SizedBox(width: 12),
-                                Text('Identificar con IA', style: AppTypography.bodySm),
+                                Text('Identificar', style: AppTypography.bodySm),
                               ],
                             ),
                           ),
@@ -741,6 +741,7 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
   bool _isLoading = true;
   LyricsResult _lyricsResult = LyricsResult.empty();
   final ScrollController _scrollController = ScrollController();
+  List<GlobalKey> _lineKeys = [];
   int _lastActiveIndex = -1;
 
   @override
@@ -754,20 +755,24 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
     if (mounted) {
       setState(() {
         _lyricsResult = result;
+        _lineKeys = List.generate(result.syncedLines.length, (_) => GlobalKey());
         _isLoading = false;
       });
     }
   }
 
   void _scrollToActiveLine(int index) {
-    if (index != _lastActiveIndex && _scrollController.hasClients && index >= 0) {
+    if (index >= 0 && index < _lineKeys.length) {
       _lastActiveIndex = index;
-      final targetOffset = (index * 48.0) - 100.0;
-      _scrollController.animateTo(
-        targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-      );
+      final keyContext = _lineKeys[index].currentContext;
+      if (keyContext != null && keyContext.findRenderObject() != null) {
+        Scrollable.ensureVisible(
+          keyContext,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeInOutCubic,
+        );
+      }
     }
   }
 
@@ -794,7 +799,7 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
           break;
         }
       }
-      if (activeIndex != -1) {
+      if (activeIndex != -1 && activeIndex != _lastActiveIndex) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _scrollToActiveLine(activeIndex);
         });
@@ -861,7 +866,7 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
                       children: [
                         CircularProgressIndicator(color: AppColors.primary),
                         SizedBox(height: 16),
-                        Text('🤖 Identificando letras en tiempo real...', style: TextStyle(color: Colors.white70)),
+                        Text('Cargando letras en tiempo real...', style: TextStyle(color: Colors.white70)),
                       ],
                     ),
                   )
@@ -874,30 +879,45 @@ class _RealSyncedLyricsModalState extends State<RealSyncedLyricsModal> {
                         ),
                       )
                     : _lyricsResult.isSynced
-                        ? ListView.builder(
-                            controller: _scrollController,
-                            itemCount: _lyricsResult.syncedLines.length,
-                            itemBuilder: (context, index) {
-                              final line = _lyricsResult.syncedLines[index];
-                              final isCurrent = index == activeIndex;
+                        ? LayoutBuilder(
+                            builder: (context, constraints) {
+                              final verticalPadding = constraints.maxHeight * 0.42;
+                              return SingleChildScrollView(
+                                controller: _scrollController,
+                                physics: const BouncingScrollPhysics(),
+                                padding: EdgeInsets.symmetric(
+                                  vertical: verticalPadding,
+                                  horizontal: 16.0,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: List.generate(_lyricsResult.syncedLines.length, (index) {
+                                    final line = _lyricsResult.syncedLines[index];
+                                    final isCurrent = index == activeIndex;
+                                    final key = index < _lineKeys.length ? _lineKeys[index] : null;
 
-                              return GestureDetector(
-                                onTap: () => audioService.seek(line.timestamp),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 10.0),
-                                  child: AnimatedDefaultTextStyle(
-                                    duration: const Duration(milliseconds: 200),
-                                    style: TextStyle(
-                                      color: isCurrent ? AppColors.primary : Colors.white.withOpacity(0.5),
-                                      fontSize: isCurrent ? 22 : 16,
-                                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                                      height: 1.4,
-                                    ),
-                                    child: Text(
-                                      line.text,
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
+                                    return GestureDetector(
+                                      key: key,
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () => audioService.seek(line.timestamp),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                        child: AnimatedDefaultTextStyle(
+                                          duration: const Duration(milliseconds: 250),
+                                          style: TextStyle(
+                                            color: isCurrent ? AppColors.primary : Colors.white.withOpacity(0.45),
+                                            fontSize: isCurrent ? 22 : 16,
+                                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
+                                            height: 1.4,
+                                          ),
+                                          child: Text(
+                                            line.text,
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }),
                                 ),
                               );
                             },

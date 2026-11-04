@@ -59,10 +59,22 @@ class AITaggerService {
           final collectionName = bestMatch['collectionName'] as String? ?? song.album;
           final primaryGenreName = bestMatch['primaryGenreName'] as String?;
           final releaseDateStr = bestMatch['releaseDate'] as String?;
+          final trackTimeMillis = bestMatch['trackTimeMillis'] as int?;
 
           String? yearStr;
           if (releaseDateStr != null && releaseDateStr.length >= 4) {
             yearStr = releaseDateStr.substring(0, 4);
+          }
+
+          // Duración oficial reportada por iTunes (corrige errores de códec SBR / duración duplicada)
+          Duration resolvedDuration = song.duration;
+          if (trackTimeMillis != null && trackTimeMillis > 0) {
+            final itunesDur = Duration(milliseconds: trackTimeMillis);
+            if (resolvedDuration == Duration.zero ||
+                (resolvedDuration.inSeconds >= (itunesDur.inSeconds * 1.8).round() &&
+                 resolvedDuration.inSeconds <= (itunesDur.inSeconds * 2.2).round())) {
+              resolvedDuration = itunesDur;
+            }
           }
 
           // Portada en alta resolución (600x600bb)
@@ -81,6 +93,7 @@ class AITaggerService {
             album: collectionName,
             coverUrl: highResCoverUrl,
             localCoverPath: localCoverPath,
+            duration: resolvedDuration,
             genre: primaryGenreName,
             year: yearStr,
           );

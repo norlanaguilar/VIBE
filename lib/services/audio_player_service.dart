@@ -12,6 +12,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/song_model.dart';
 import 'ai_tagger_service.dart';
+import 'audio_duration_helper.dart';
 import 'home_widget_bridge.dart';
 import 'spectrum_service.dart';
 import 'vibe_audio_handler.dart';
@@ -226,8 +227,23 @@ class AudioPlayerService extends ChangeNotifier {
     });
 
     _player.durationStream.listen((dur) {
-      if (dur != null) {
+      if (dur != null && dur > Duration.zero) {
+        // Protección contra el bug de decodificación SBR / AAC-HE en ExoPlayer y AVPlayer
+        // donde la duración reportada es aproximadamente el doble (1.8x - 2.2x) de la real:
+        if (_currentSong != null && _currentSong!.duration > Duration.zero) {
+          final realSec = _currentSong!.duration.inSeconds;
+          final reportedSec = dur.inSeconds;
+          if (reportedSec >= (realSec * 1.8).round() && reportedSec <= (realSec * 2.2).round()) {
+            _duration = _currentSong!.duration;
+            notifyListeners();
+            return;
+          }
+        }
         _duration = dur;
+        if (_currentSong != null && _currentSong!.duration == Duration.zero) {
+          _currentSong = _currentSong!.copyWith(duration: dur);
+          _saveMetadataCache();
+        }
         notifyListeners();
       }
     });
@@ -374,21 +390,45 @@ class AudioPlayerService extends ChangeNotifier {
       }
       notifyListeners();
 
-      // Probar duración exacta en segundo plano si no se ha registrado
+      // Probar duración exacta en segundo plano y corregir duraciones duplicadas por bug SBR
       for (int i = 0; i < _librarySongs.length; i++) {
-        if (_librarySongs[i].duration == Duration.zero && _librarySongs[i].localAudioPath != null) {
-          try {
-            final probe = AudioPlayer();
-            final dur = await probe.setFilePath(_librarySongs[i].localAudioPath!);
-            if (dur != null) {
-              _librarySongs[i] = _librarySongs[i].copyWith(duration: dur);
-              if (_currentSong?.id == _librarySongs[i].id) {
-                _currentSong = _librarySongs[i];
-              }
-              notifyListeners();
+        final localPath = _librarySongs[i].localAudioPath;
+        if (localPath != null) {
+          final file = File(localPath);
+          if (file.existsSync()) {
+            Duration? exactDur;
+            if (localPath.toLowerCase().endsWith('.m4a') || localPath.toLowerCase().endsWith('.mp4')) {
+              exactDur = await AudioDurationHelper.readM4aDuration(file);
             }
-            await probe.dispose();
-          } catch (_) {}
+
+            if (exactDur != null && exactDur > Duration.zero) {
+              final currentDur = _librarySongs[i].duration;
+              if (currentDur == Duration.zero ||
+                  (currentDur.inSeconds >= (exactDur.inSeconds * 1.8).round() &&
+                   currentDur.inSeconds <= (exactDur.inSeconds * 2.2).round())) {
+                _librarySongs[i] = _librarySongs[i].copyWith(duration: exactDur);
+                if (_currentSong?.id == _librarySongs[i].id) {
+                  _currentSong = _librarySongs[i];
+                  _duration = exactDur;
+                }
+                notifyListeners();
+              }
+            } else if (_librarySongs[i].duration == Duration.zero) {
+              try {
+                final probe = AudioPlayer();
+                final dur = await probe.setFilePath(localPath);
+                if (dur != null) {
+                  _librarySongs[i] = _librarySongs[i].copyWith(duration: dur);
+                  if (_currentSong?.id == _librarySongs[i].id) {
+                    _currentSong = _librarySongs[i];
+                    _duration = dur;
+                  }
+                  notifyListeners();
+                }
+                await probe.dispose();
+              } catch (_) {}
+            }
+          }
         }
       }
 
@@ -511,6 +551,9 @@ class AudioPlayerService extends ChangeNotifier {
     _librarySongs.insert(0, song);
     if (_currentSong == null) {
       _currentSong = song;
+      if (song.duration > Duration.zero) {
+        _duration = song.duration;
+      }
     }
     _saveMetadataCache();
     notifyListeners();
@@ -533,8 +576,20 @@ class AudioPlayerService extends ChangeNotifier {
     try {
       final cachedFile = await YouTubeStreamResolver.getOrDownloadStreamAudio(song.youtubeId!);
       if (await cachedFile.exists() && await cachedFile.length() > 50000) {
+        // Verificar duración precisa del archivo descargado para evitar duplicaciones por códec SBR
+        Duration songDuration = song.duration;
+        final exactM4aDur = await AudioDurationHelper.readM4aDuration(cachedFile);
+        if (exactM4aDur != null && exactM4aDur > Duration.zero) {
+          if (songDuration == Duration.zero ||
+              (songDuration.inSeconds >= (exactM4aDur.inSeconds * 1.8).round() &&
+               songDuration.inSeconds <= (exactM4aDur.inSeconds * 2.2).round())) {
+            songDuration = exactM4aDur;
+          }
+        }
+
         final updated = song.copyWith(
           localAudioPath: cachedFile.path,
+          duration: songDuration,
           isDownloaded: true,
         );
         final idx = _librarySongs.indexWhere((s) => s.id == song.id);
@@ -543,6 +598,9 @@ class AudioPlayerService extends ChangeNotifier {
         }
         if (_currentSong?.id == song.id) {
           _currentSong = updated;
+          if (songDuration > Duration.zero) {
+            _duration = songDuration;
+          }
         }
         await _saveMetadataCache();
       }
@@ -621,6 +679,10 @@ class AudioPlayerService extends ChangeNotifier {
   Future<void> playSong(Song song) async {
     final token = ++_playToken;
     _currentSong = song;
+    if (song.duration > Duration.zero) {
+      _duration = song.duration;
+    }
+    _position = Duration.zero;
     if (_activeQueue.isEmpty || !_activeQueue.any((s) => s.id == song.id)) {
       _activeQueue = List.from(_librarySongs);
     }
@@ -917,14 +979,33 @@ class AudioPlayerService extends ChangeNotifier {
           final targetPath = path.join(musicDir.path, fileName);
           await File(file.path).copy(targetPath);
 
-          final song = Song(
+          Duration songDuration = Duration.zero;
+          if (fileName.toLowerCase().endsWith('.m4a') || fileName.toLowerCase().endsWith('.mp4')) {
+            songDuration = (await AudioDurationHelper.readM4aDuration(File(targetPath))) ?? Duration.zero;
+          }
+          if (songDuration == Duration.zero) {
+            try {
+              final probe = AudioPlayer();
+              final dur = await probe.setFilePath(targetPath);
+              if (dur != null) songDuration = dur;
+              await probe.dispose();
+            } catch (_) {}
+          }
+
+          Song song = Song(
             id: targetPath,
             title: path.basenameWithoutExtension(fileName),
             artist: 'Artista Local',
             album: 'Música Importada',
             localAudioPath: targetPath,
+            duration: songDuration,
             isDownloaded: true,
           );
+
+          if (_enableAiTagging) {
+            final enriched = await AITaggerService.identifyAndEnrich(song);
+            song = enriched;
+          }
 
           addSong(song);
           importedSongs.add(song);
