@@ -1,30 +1,103 @@
 import 'dart:async';
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 
 /// Puente entre el reproductor (just_audio) y los controles del sistema:
 /// pantalla de bloqueo / Centro de Control en iOS, notificación y auriculares en Android.
-///
-/// A diferencia de just_audio_background, aquí declaramos explícitamente los
-/// botones Anterior / Siguiente, así iOS los muestra activos aunque solo haya
-/// una canción cargada en el reproductor (la cola la maneja AudioPlayerService).
 class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
   final AudioPlayer player = AudioPlayer();
 
   /// Callbacks que conecta AudioPlayerService para moverse por su propia cola
   Future<void> Function()? onSkipToNext;
   Future<void> Function()? onSkipToPrevious;
+  Future<void> Function()? onPlaybackCompleted;
 
   VibeAudioHandler() {
+    _initAudioSession();
+
     player.playbackEventStream.listen((_) => _broadcastState(), onError: (Object e, StackTrace st) {
       // Errores de red en streaming: se reporta el estado para que la UI no se congele
       _broadcastState();
     });
     player.playingStream.listen((_) => _broadcastState());
+
+    // Al terminar una canción: nunca emitir 'completed' si hay callback para avanzar,
+    // porque en iOS eso destruye inmediatamente el widget de la pantalla de bloqueo
+    // y el sistema suspende la aplicación en segundo plano.
+    player.processingStateStream.listen((state) {
+      if (state == ProcessingState.completed) {
+        _handlePlaybackCompleted();
+      }
+    });
+  }
+
+  Future<void> _initAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration.music());
+      await session.setActive(true);
+
+      // Gestionar interrupciones de audio en iOS (llamadas telefónicas, alarmas, Siri)
+      session.interruptionEventStream.listen((event) {
+        if (event.begin) {
+          switch (event.type) {
+            case AudioInterruptionType.duck:
+              player.setVolume(0.5);
+              break;
+            case AudioInterruptionType.pause:
+            case AudioInterruptionType.unknown:
+              pause();
+              break;
+          }
+        } else {
+          switch (event.type) {
+            case AudioInterruptionType.duck:
+              player.setVolume(1.0);
+              break;
+            case AudioInterruptionType.pause:
+              play();
+              break;
+            case AudioInterruptionType.unknown:
+              break;
+          }
+        }
+      });
+    } catch (e) {
+      print('AudioSession init error: $e');
+    }
+  }
+
+  void _handlePlaybackCompleted() {
+    if (onPlaybackCompleted != null) {
+      // Mantener la sesión activa indicando que estamos cargando/bufferizando la siguiente pista.
+      playbackState.add(playbackState.value.copyWith(
+        processingState: AudioProcessingState.buffering,
+        playing: true,
+      ));
+      onPlaybackCompleted!();
+    } else {
+      _broadcastState();
+    }
   }
 
   void _broadcastState() {
     final playing = player.playing;
+    final procState = player.processingState;
+
+    final AudioProcessingState audioProcState;
+    if (procState == ProcessingState.completed && onPlaybackCompleted != null) {
+      audioProcState = AudioProcessingState.buffering;
+    } else {
+      audioProcState = const {
+        ProcessingState.idle: AudioProcessingState.idle,
+        ProcessingState.loading: AudioProcessingState.loading,
+        ProcessingState.buffering: AudioProcessingState.buffering,
+        ProcessingState.ready: AudioProcessingState.ready,
+        ProcessingState.completed: AudioProcessingState.completed,
+      }[procState]!;
+    }
+
     playbackState.add(playbackState.value.copyWith(
       controls: [
         MediaControl.skipToPrevious,
@@ -39,18 +112,19 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
         MediaAction.skipToPrevious,
       },
       androidCompactActionIndices: const [0, 1, 2],
-      processingState: const {
-        ProcessingState.idle: AudioProcessingState.idle,
-        ProcessingState.loading: AudioProcessingState.loading,
-        ProcessingState.buffering: AudioProcessingState.buffering,
-        ProcessingState.ready: AudioProcessingState.ready,
-        ProcessingState.completed: AudioProcessingState.completed,
-      }[player.processingState]!,
-      playing: playing,
+      processingState: audioProcState,
+      playing: (procState == ProcessingState.completed && onPlaybackCompleted != null) ? true : playing,
       updatePosition: player.position,
       bufferedPosition: player.bufferedPosition,
       speed: player.speed,
-      queueIndex: 0,
+    ));
+  }
+
+  /// Actualiza la cola de reproducción en los controles del sistema (iOS / Android)
+  void updateQueueState(List<MediaItem> items, int currentIndex) {
+    queue.add(items);
+    playbackState.add(playbackState.value.copyWith(
+      queueIndex: currentIndex,
     ));
   }
 

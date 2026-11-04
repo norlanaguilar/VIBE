@@ -53,7 +53,7 @@ class AudioPlayerService extends ChangeNotifier {
   bool _isShuffle = false;
   bool get isShuffle => _isShuffle;
 
-  LoopMode _loopMode = LoopMode.off;
+  LoopMode _loopMode = LoopMode.all;
   LoopMode get loopMode => _loopMode;
 
   bool _enableAiTagging = true;
@@ -194,6 +194,7 @@ class AudioPlayerService extends ChangeNotifier {
     // notificación, auriculares y widget de Android
     _handler.onSkipToNext = () async => skipNext();
     _handler.onSkipToPrevious = () async => skipPrevious();
+    _handler.onPlaybackCompleted = () async => skipNext(fromCompletion: true);
 
     // Botones del widget de iOS (llegan por canal nativo)
     HomeWidgetBridge.listen((command) async {
@@ -248,12 +249,8 @@ class AudioPlayerService extends ChangeNotifier {
       }
     });
 
-    _player.processingStateStream.listen((state) {
-      if (state == ProcessingState.completed) {
-        // LoopMode.one lo resuelve el propio reproductor; aquí solo avanzamos la cola
-        skipNext(fromCompletion: true);
-      }
-    });
+    // El avance automático de canciones al completarse lo coordina VibeAudioHandler
+    // para mantener la sesión de audio activa y el widget de iOS intacto.
   }
 
   /// Escanear directorio de documentos e integrar caché guardado en disco
@@ -692,6 +689,22 @@ class AudioPlayerService extends ChangeNotifier {
     final mediaItem = _mediaItemFor(song);
     HomeWidgetBridge.update(song, isPlaying: true);
 
+    // Actualizar cola y controles en la pantalla de bloqueo (iOS/Android)
+    final queueItems = _activeQueue.map((s) => _mediaItemFor(s)).toList();
+    final currentIdx = _activeQueue.indexWhere((s) => s.id == song.id);
+    _handler.updateQueueState(queueItems, currentIdx >= 0 ? currentIdx : 0);
+
+    // Precargar automáticamente la SIGUIENTE canción en segundo plano para transición inmediata
+    if (_activeQueue.length > 1 && currentIdx != -1) {
+      final nextSong = _activeQueue[(currentIdx + 1) % _activeQueue.length];
+      if (nextSong.youtubeId != null &&
+          (nextSong.localAudioPath == null ||
+              !File(nextSong.localAudioPath!).existsSync() ||
+              File(nextSong.localAudioPath!).lengthSync() < 50000)) {
+        unawaited(_preloadSongInBackground(nextSong));
+      }
+    }
+
     try {
       bool playedFromLocal = false;
       if (song.localAudioPath != null && await File(song.localAudioPath!).exists()) {
@@ -812,6 +825,7 @@ class AudioPlayerService extends ChangeNotifier {
     } else {
       // Sin repetición, la reproducción se detiene al terminar la última canción de la cola
       if (fromCompletion && _loopMode == LoopMode.off && currentIndex == queue.length - 1) {
+        _handler.stop();
         return;
       }
       int nextIndex = (currentIndex + 1) % queue.length;
