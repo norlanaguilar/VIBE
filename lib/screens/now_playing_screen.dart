@@ -136,7 +136,7 @@ class NowPlayingScreen extends StatelessWidget {
                 opacity: 0.25,
                 child: ImageFiltered(
                   imageFilter: ImageFilter.blur(sigmaX: 50, sigmaY: 50),
-                  child: _buildCoverImage(song),
+                  child: _buildCoverImage(song, isPlaying: audioService.isPlaying, isBackground: true),
                 ),
               ),
             ),
@@ -302,7 +302,7 @@ class NowPlayingScreen extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(24),
                                 child: AspectRatio(
                                   aspectRatio: 1.0,
-                                  child: _buildCoverImage(song),
+                                  child: _buildCoverImage(song, isPlaying: audioService.isPlaying),
                                 ),
                               ),
                             ),
@@ -617,9 +617,15 @@ class NowPlayingScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildCoverImage(Song song) {
+  Widget _buildCoverImage(Song song, {required bool isPlaying, bool isBackground = false}) {
+    if (isBackground && song.localCoverPath != null && File(song.localCoverPath!).existsSync()) {
+      return Image.file(
+        File(song.localCoverPath!),
+        fit: BoxFit.cover,
+      );
+    }
     if (song.videoCoverPath != null && File(song.videoCoverPath!).existsSync()) {
-      return LoopedMutedVideoCoverWidget(videoPath: song.videoCoverPath!);
+      return LoopedMutedVideoCoverWidget(videoPath: song.videoCoverPath!, isPlaying: isPlaying);
     } else if (song.localCoverPath != null && File(song.localCoverPath!).existsSync()) {
       return Image.file(
         File(song.localCoverPath!),
@@ -653,7 +659,12 @@ class NowPlayingScreen extends StatelessWidget {
 
 class LoopedMutedVideoCoverWidget extends StatefulWidget {
   final String videoPath;
-  const LoopedMutedVideoCoverWidget({super.key, required this.videoPath});
+  final bool isPlaying;
+  const LoopedMutedVideoCoverWidget({
+    super.key,
+    required this.videoPath,
+    required this.isPlaying,
+  });
 
   @override
   State<LoopedMutedVideoCoverWidget> createState() => _LoopedMutedVideoCoverWidgetState();
@@ -675,6 +686,18 @@ class _LoopedMutedVideoCoverWidgetState extends State<LoopedMutedVideoCoverWidge
     if (oldWidget.videoPath != widget.videoPath) {
       _controller?.dispose();
       _initVideo();
+    } else if (oldWidget.isPlaying != widget.isPlaying) {
+      _syncPlayPause();
+    }
+  }
+
+  void _syncPlayPause() {
+    if (_controller != null && _isInitialized && _controller!.value.isInitialized) {
+      if (widget.isPlaying && !_controller!.value.isPlaying) {
+        _controller!.play();
+      } else if (!widget.isPlaying && _controller!.value.isPlaying) {
+        _controller!.pause();
+      }
     }
   }
 
@@ -686,7 +709,11 @@ class _LoopedMutedVideoCoverWidgetState extends State<LoopedMutedVideoCoverWidge
         await controller.initialize();
         await controller.setVolume(0.0); // Muted (sin audio del video)
         await controller.setLooping(true); // Bucle infinito
-        await controller.play();
+        if (widget.isPlaying) {
+          await controller.play();
+        } else {
+          await controller.pause();
+        }
         if (mounted) {
           setState(() {
             _controller = controller;
@@ -707,6 +734,8 @@ class _LoopedMutedVideoCoverWidgetState extends State<LoopedMutedVideoCoverWidge
 
   @override
   Widget build(BuildContext context) {
+    _syncPlayPause();
+
     if (_isInitialized && _controller != null && _controller!.value.isInitialized) {
       return SizedBox.expand(
         child: FittedBox(
