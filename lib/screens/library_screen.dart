@@ -875,15 +875,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            song.title,
-                            style: AppTypography.bodyLg.copyWith(
-                              fontSize: 15,
-                              fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
-                              color: isCurrent ? AppColors.primary : AppColors.onSurface,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  song.title,
+                                  style: AppTypography.bodyLg.copyWith(
+                                    fontSize: 15,
+                                    fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
+                                    color: isCurrent ? AppColors.primary : AppColors.onSurface,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (song.isStreaming) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: (song.source == 'spotify' ? const Color(0xFF1DB954) : const Color(0xFFFF4E45)).withOpacity(0.18),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    song.source == 'spotify' ? 'SPOTIFY' : 'YOUTUBE',
+                                    style: TextStyle(
+                                      color: song.source == 'spotify' ? const Color(0xFF1DB954) : const Color(0xFFFF4E45),
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                           const SizedBox(height: 2),
                           Text(
@@ -919,9 +943,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           );
                         } else if (val == 'like') {
                           audioService.toggleLike(song);
+                        } else if (val == 'download') {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Descargando "${song.title}" para escuchar sin internet...'),
+                              backgroundColor: AppColors.primaryContainer,
+                            ),
+                          );
+                          audioService.downloadSongForOffline(song);
+                        } else if (val == 'remove_stream') {
+                          audioService.removeStreamingSong(song);
                         }
                       },
                       itemBuilder: (context) => [
+                        if (!song.isDownloaded && (song.youtubeId != null || song.isStreaming))
+                          const PopupMenuItem(
+                            value: 'download',
+                            child: Row(
+                              children: [
+                                Icon(Icons.download, color: AppColors.primary),
+                                SizedBox(width: 8),
+                                Text('Descargar para escuchar offline'),
+                              ],
+                            ),
+                          ),
                         const PopupMenuItem(
                           value: 'playlist',
                           child: Row(
@@ -965,6 +1010,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             ],
                           ),
                         ),
+                        if (song.isStreaming)
+                          const PopupMenuItem(
+                            value: 'remove_stream',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete_outline, color: Colors.redAccent),
+                                SizedBox(width: 8),
+                                Text('Quitar de biblioteca', style: TextStyle(color: Colors.redAccent)),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   ],

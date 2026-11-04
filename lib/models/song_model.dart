@@ -15,6 +15,15 @@ class Song {
   String? year;
   DateTime addedAt;
 
+  /// ID del video de YouTube del que se transmite el audio (canciones en streaming)
+  String? youtubeId;
+
+  /// Enlace original que pegó el usuario (YouTube o Spotify)
+  String? sourceUrl;
+
+  /// Plataforma de origen: 'local', 'youtube' o 'spotify'
+  String source;
+
   Song({
     required this.id,
     required this.title,
@@ -30,8 +39,17 @@ class Song {
     this.isDownloaded = false,
     this.genre,
     this.year,
+    this.youtubeId,
+    this.sourceUrl,
+    this.source = 'local',
     DateTime? addedAt,
   }) : addedAt = addedAt ?? DateTime.now();
+
+  /// Canción importada desde la red (YouTube o Spotify)
+  bool get isImported => youtubeId != null || source == 'youtube' || source == 'spotify';
+
+  /// La canción se reproduce directamente desde internet (aún sin archivo local completo)
+  bool get isStreaming => isImported && (localAudioPath == null || localAudioPath!.isEmpty);
 
   Song copyWith({
     String? id,
@@ -48,6 +66,9 @@ class Song {
     bool? isDownloaded,
     String? genre,
     String? year,
+    String? youtubeId,
+    String? sourceUrl,
+    String? source,
     DateTime? addedAt,
   }) {
     return Song(
@@ -65,6 +86,9 @@ class Song {
       isDownloaded: isDownloaded ?? this.isDownloaded,
       genre: genre ?? this.genre,
       year: year ?? this.year,
+      youtubeId: youtubeId ?? this.youtubeId,
+      sourceUrl: sourceUrl ?? this.sourceUrl,
+      source: source ?? this.source,
       addedAt: addedAt ?? this.addedAt,
     );
   }
@@ -84,6 +108,9 @@ class Song {
         'isDownloaded': isDownloaded,
         'genre': genre,
         'year': year,
+        'youtubeId': youtubeId,
+        'sourceUrl': sourceUrl,
+        'source': source,
         'addedAt': addedAt.toIso8601String(),
       };
 
@@ -103,6 +130,9 @@ class Song {
       isDownloaded: json['isDownloaded'] as bool? ?? false,
       genre: json['genre'] as String?,
       year: json['year'] as String?,
+      youtubeId: json['youtubeId'] as String?,
+      sourceUrl: json['sourceUrl'] as String?,
+      source: json['source'] as String? ?? 'local',
       addedAt: json['addedAt'] != null ? DateTime.tryParse(json['addedAt'] as String) : null,
     );
   }

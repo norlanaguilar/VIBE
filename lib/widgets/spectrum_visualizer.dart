@@ -1,5 +1,8 @@
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../services/audio_player_service.dart';
 import '../theme/app_colors.dart';
 
 class SpectrumVisualizer extends StatefulWidget {
@@ -10,8 +13,8 @@ class SpectrumVisualizer extends StatefulWidget {
   const SpectrumVisualizer({
     super.key,
     required this.isPlaying,
-    this.barCount = 32,
-    this.height = 60,
+    this.barCount = 36,
+    this.height = 36,
   });
 
   @override
@@ -20,112 +23,170 @@ class SpectrumVisualizer extends StatefulWidget {
 
 class _SpectrumVisualizerState extends State<SpectrumVisualizer> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
+  List<double> _barHeights = [];
+  double _phase = 0.0;
 
   @override
   void initState() {
     super.initState();
+    _barHeights = List.filled(widget.barCount, 0.08);
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
+      duration: const Duration(milliseconds: 1000),
+    )..addListener(_onTick);
+
     if (widget.isPlaying) {
       _controller.repeat();
+      _requestLiveSpectrum();
     }
+  }
+
+  void _requestLiveSpectrum() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final audioService = Provider.of<AudioPlayerService>(context, listen: false);
+      audioService.spectrum.ensureLive();
+    });
   }
 
   @override
   void didUpdateWidget(SpectrumVisualizer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.barCount != oldWidget.barCount) {
+      _barHeights = List.filled(widget.barCount, 0.08);
+    }
     if (widget.isPlaying != oldWidget.isPlaying) {
       if (widget.isPlaying) {
         _controller.repeat();
+        _requestLiveSpectrum();
       } else {
-        _controller.stop();
+        // No detenemos de golpe: dejamos que el decay baje suavemente a cero
       }
     }
   }
 
+  void _onTick() {
+    if (!mounted) return;
+    final audioService = Provider.of<AudioPlayerService>(context, listen: false);
+    final Float32List? realLevels = widget.isPlaying ? audioService.spectrum.currentLevels() : null;
+
+    _phase += 0.08;
+    if (_phase > 2 * pi) _phase -= 2 * pi;
+
+    bool anyActive = false;
+
+    for (int i = 0; i < widget.barCount; i++) {
+      double target = 0.06;
+
+      if (widget.isPlaying) {
+        if (realLevels != null && realLevels.isNotEmpty) {
+          // Mapear el índice de la barra al rango de frecuencias del espectro real
+          // Usamos curva logarítmica/perceptual para dar más espacio a bajos y medios
+          final norm = i / (widget.barCount - 1).clamp(1, 999);
+          final bandIndex = (pow(norm, 1.25) * (realLevels.length - 1)).clamp(0, realLevels.length - 1).toInt();
+          target = realLevels[bandIndex].toDouble().clamp(0.06, 1.0);
+        } else {
+          // Fallback dinámico si aún no hay datos del decodificador/micrófono
+          final wave1 = sin(_phase * 2.5 + i * 0.45).abs();
+          final wave2 = cos(_phase * 4.2 + i * 1.1).abs();
+          final envelope = sin((i / (widget.barCount - 1)) * pi);
+          target = ((wave1 * 0.5 + wave2 * 0.5) * (0.35 + 0.65 * envelope)).clamp(0.08, 0.95);
+        }
+      }
+
+      // Física de audio profesional: Ataque rápido (reacciona al instante a los golpes de batería y notas)
+      // y caída suave (decay / release)
+      if (target > _barHeights[i]) {
+        _barHeights[i] = _barHeights[i] * 0.35 + target * 0.65;
+      } else {
+        _barHeights[i] = _barHeights[i] * 0.86 + target * 0.14;
+      }
+
+      if (_barHeights[i] > 0.07) anyActive = true;
+    }
+
+    if (!widget.isPlaying && !anyActive && _controller.isAnimating) {
+      _controller.stop();
+    }
+
+    setState(() {});
+  }
+
   @override
   void dispose() {
+    _controller.removeListener(_onTick);
     _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        final t = _controller.value * 2 * pi;
-
-        return SizedBox(
-          height: widget.height,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: List.generate(widget.barCount, (index) {
-              double factor;
-              if (widget.isPlaying) {
-                // Generar un comportamiento pseudo-aleatorio único para CADA barra usando semillas matemáticas irracionales
-                double speed1 = 2.5 + (index % 3) * 1.5;
-                double speed2 = 6.0 + (index % 5) * 1.2;
-                double speed3 = 14.0 + (index % 7) * 0.8;
-                
-                double phase1 = index * 0.5;
-                double phase2 = index * 1.3;
-                double phase3 = index * 2.7;
-
-                // Combinación de 3 ondas a diferentes velocidades para crear ruido suave y desincronizado (smooth noise)
-                double wave1 = sin(t * speed1 + phase1).abs();
-                double wave2 = cos(t * speed2 + phase2).abs();
-                double wave3 = sin(t * speed3 + phase3).abs();
-
-                // Envolvente tipo "campana" para simular EQ real (vocales al centro más altas, bajos y agudos a los lados)
-                double envelope = sin((index / (widget.barCount - 1)) * pi);
-                
-                factor = (wave1 * 0.4 + wave2 * 0.4 + wave3 * 0.2) * (0.3 + 0.7 * envelope);
-                factor = factor.clamp(0.08, 1.0);
-              } else {
-                factor = 0.08;
-              }
-
-              double minHeight = 6.0;
-              double maxHeight = widget.height;
-              double currentHeight = minHeight + (maxHeight - minHeight) * factor;
-
-              // Alternancia neón elegante (Violeta Eléctrico y Cyan)
-              Color barColor = (index % 2 == 0) ? AppColors.primary : AppColors.secondary;
-
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 40),
-                margin: const EdgeInsets.symmetric(horizontal: 2.0),
-                width: 4.5,
-                height: currentHeight,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    colors: [
-                      barColor.withOpacity(0.50),
-                      barColor,
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(4),
-                  boxShadow: widget.isPlaying
-                      ? [
-                          BoxShadow(
-                            color: barColor.withOpacity(0.45),
-                            blurRadius: 6,
-                            spreadRadius: 1,
-                          ),
-                        ]
-                      : [],
-                ),
-              );
-            }),
-          ),
-        );
-      },
+    return SizedBox(
+      height: widget.height,
+      child: CustomPaint(
+        size: Size.infinite,
+        painter: _SpectrumPainter(
+          heights: _barHeights,
+          isPlaying: widget.isPlaying,
+        ),
+      ),
     );
   }
+}
+
+class _SpectrumPainter extends CustomPainter {
+  final List<double> heights;
+  final bool isPlaying;
+
+  _SpectrumPainter({
+    required this.heights,
+    required this.isPlaying,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (heights.isEmpty) return;
+
+    final int count = heights.length;
+    final double spacing = 2.5;
+    final double totalSpacing = spacing * (count - 1);
+    final double barWidth = ((size.width - totalSpacing) / count).clamp(2.5, 6.0);
+    final double actualWidth = (count * barWidth) + totalSpacing;
+    final double startX = (size.width - actualWidth) / 2;
+
+    for (int i = 0; i < count; i++) {
+      final double x = startX + i * (barWidth + spacing);
+      final double normalizedHeight = heights[i].clamp(0.08, 1.0);
+      final double barH = (size.height * normalizedHeight).clamp(4.0, size.height);
+      final double y = size.height - barH;
+
+      final Rect rect = Rect.fromLTWH(x, y, barWidth, barH);
+      final RRect rrect = RRect.fromRectAndRadius(rect, const Radius.circular(3));
+
+      // Gradiente neón dinámico (Violeta Eléctrico -> Cyan / Aguamarina)
+      final Color baseColor = (i % 2 == 0) ? AppColors.primary : AppColors.secondary;
+      final Paint paint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            baseColor.withOpacity(0.55),
+            baseColor,
+          ],
+        ).createShader(rect);
+
+      // Sombra de brillo neón sutil cuando hay volumen activo
+      if (isPlaying && heights[i] > 0.15) {
+        final Paint glowPaint = Paint()
+          ..color = baseColor.withOpacity((heights[i] * 0.4).clamp(0.1, 0.45))
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+        canvas.drawRRect(rrect, glowPaint);
+      }
+
+      canvas.drawRRect(rrect, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SpectrumPainter oldDelegate) => true;
 }

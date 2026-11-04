@@ -1,30 +1,32 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:vibe_local/main.dart';
+import 'package:vibe_local/models/song_model.dart';
+import 'package:vibe_local/services/link_import_service.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const VibeLocalApp());
+  test('Song model serialization smoke test', () {
+    final song = Song(
+      id: 'test_1',
+      title: 'Test Title',
+      artist: 'Test Artist',
+      album: 'Test Album',
+      youtubeId: 'xyz123',
+      source: 'youtube',
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(song.isStreaming, isTrue);
+    final json = song.toJson();
+    final restored = Song.fromJson(json);
+    expect(restored.id, equals('test_1'));
+    expect(restored.youtubeId, equals('xyz123'));
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  test('Link parser recognizes YouTube and Spotify links', () {
+    final yt = LinkImportService.parse('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(yt?.platform, equals(LinkPlatform.youtube));
+    expect(yt?.id, equals('dQw4w9WgXcQ'));
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    final sp = LinkImportService.parse('https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT');
+    expect(sp?.platform, equals(LinkPlatform.spotify));
+    expect(sp?.id, equals('4cOdK2wGLETKBW3PvgPWqT'));
   });
 }

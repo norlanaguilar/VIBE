@@ -1,22 +1,28 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import 'package:provider/provider.dart';
 import 'services/audio_player_service.dart';
+import 'services/vibe_audio_handler.dart';
 import 'theme/app_colors.dart';
 import 'screens/splash_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'com.example.vibe_local.audio',
-    androidNotificationChannelName: 'VibeLocal Audio Playback',
-    androidNotificationOngoing: true,
+  
+  final audioHandler = await AudioService.init(
+    builder: () => VibeAudioHandler(),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.example.vibe_local.audio',
+      androidNotificationChannelName: 'VibeLocal Audio Playback',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+    ),
   );
 
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AudioPlayerService()),
+        ChangeNotifierProvider(create: (_) => AudioPlayerService(audioHandler)),
       ],
       child: const VibeLocalApp(),
     ),

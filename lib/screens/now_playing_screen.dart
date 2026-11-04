@@ -341,6 +341,73 @@ class NowPlayingScreen extends StatelessWidget {
                                 ],
                               ),
                             ),
+                            if (song.isDownloaded) ...[
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.download_done_rounded,
+                                  color: AppColors.secondary,
+                                  size: 26,
+                                ),
+                                tooltip: 'Descargada (Disponible Offline)',
+                                onPressed: () {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Esta canción ya está guardada para reproducir sin conexión.'),
+                                      duration: Duration(seconds: 2),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ] else if (audioService.isSongDownloading(song.id)) ...[
+                              const Padding(
+                                padding: EdgeInsets.all(12.0),
+                                child: SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ),
+                            ] else if (song.youtubeId != null || song.isStreaming) ...[
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_circle_down_rounded,
+                                  color: AppColors.onSurfaceVariant,
+                                  size: 28,
+                                ),
+                                tooltip: 'Descargar para escuchar sin conexión',
+                                onPressed: () async {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Descargando "${song.title}" para escuchar sin internet...'),
+                                      backgroundColor: AppColors.primaryContainer,
+                                    ),
+                                  );
+                                  try {
+                                    await audioService.downloadSongForOffline(song);
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('¡"${song.title}" guardada para escuchar sin conexión!'),
+                                          backgroundColor: Colors.green,
+                                        ),
+                                      );
+                                    }
+                                  } catch (e) {
+                                    if (context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('Error al descargar: $e'),
+                                          backgroundColor: Colors.redAccent,
+                                        ),
+                                      );
+                                    }
+                                  }
+                                },
+                              ),
+                            ],
                             IconButton(
                               icon: Icon(
                                 song.isLiked ? Icons.favorite : Icons.favorite_border,
@@ -410,13 +477,12 @@ class NowPlayingScreen extends StatelessWidget {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
-                            IconButton(
-                              icon: Icon(
-                                Icons.shuffle,
-                                color: audioService.isShuffle ? AppColors.primary : AppColors.onSurfaceVariant,
-                                size: 28,
-                              ),
-                              onPressed: () => audioService.toggleShuffle(),
+                            _buildModeButton(
+                              isActive: audioService.isShuffle,
+                              icon: Icons.shuffle,
+                              tooltip: audioService.isShuffle ? 'Aleatorio: ACTIVADO' : 'Aleatorio: DESACTIVADO',
+                              activeColor: AppColors.primary,
+                              onTap: () => audioService.toggleShuffle(),
                             ),
                             IconButton(
                               icon: const Icon(
@@ -445,11 +511,20 @@ class NowPlayingScreen extends StatelessWidget {
                                   ],
                                 ),
                                 child: Center(
-                                  child: Icon(
-                                    audioService.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                                    color: AppColors.primary,
-                                    size: 46,
-                                  ),
+                                  child: audioService.isBuffering
+                                      ? const SizedBox(
+                                          width: 32,
+                                          height: 32,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 3,
+                                            color: AppColors.primary,
+                                          ),
+                                        )
+                                      : Icon(
+                                          audioService.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                          color: AppColors.primary,
+                                          size: 46,
+                                        ),
                                 ),
                               ),
                             ),
@@ -461,17 +536,14 @@ class NowPlayingScreen extends StatelessWidget {
                               ),
                               onPressed: () => audioService.skipNext(),
                             ),
-                            IconButton(
-                              icon: Icon(
-                                audioService.loopMode == LoopMode.one
-                                    ? Icons.repeat_one
-                                    : Icons.repeat,
-                                color: audioService.loopMode != LoopMode.off
-                                    ? AppColors.primary
-                                    : AppColors.onSurfaceVariant,
-                                size: 28,
-                              ),
-                              onPressed: () => audioService.toggleRepeat(),
+                            _buildModeButton(
+                              isActive: audioService.loopMode != LoopMode.off,
+                              icon: audioService.loopMode == LoopMode.one ? Icons.repeat_one : Icons.repeat,
+                              tooltip: audioService.loopMode == LoopMode.one
+                                  ? 'Repetir: UNA CANCIÓN'
+                                  : (audioService.loopMode == LoopMode.all ? 'Repetir: TODA LA LISTA' : 'Repetir: DESACTIVADO'),
+                              activeColor: audioService.loopMode == LoopMode.one ? AppColors.secondary : AppColors.primary,
+                              onTap: () => audioService.toggleRepeat(),
                             ),
                           ],
                         ),
@@ -485,6 +557,62 @@ class NowPlayingScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildModeButton({
+    required bool isActive,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+    Color activeColor = AppColors.primary,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: isActive ? activeColor.withOpacity(0.20) : Colors.transparent,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isActive ? activeColor : Colors.transparent,
+              width: 1.5,
+            ),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: activeColor.withOpacity(0.40),
+                      blurRadius: 10,
+                      spreadRadius: 1,
+                    ),
+                  ]
+                : [],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                color: isActive ? activeColor : AppColors.onSurfaceVariant.withOpacity(0.6),
+                size: 26,
+              ),
+              const SizedBox(height: 2),
+              Container(
+                width: 4,
+                height: 4,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isActive ? activeColor : Colors.transparent,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
