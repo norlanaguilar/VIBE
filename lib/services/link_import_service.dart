@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../models/song_model.dart';
 import 'ai_tagger_service.dart';
+import 'youtube_stream_resolver.dart';
 
 enum LinkPlatform { youtube, spotify }
 
@@ -265,7 +266,9 @@ class LinkImportService {
       }
     }
 
-    for (final t in p.tracks) {
+    final baseTime = DateTime.now();
+    for (int i = 0; i < p.tracks.length; i++) {
+      final t = p.tracks[i];
       result.add(
         Song(
           id: t.songId,
@@ -279,6 +282,7 @@ class LinkImportService {
           sourceUrl: t.sourceUrl ?? p.sourceUrl,
           source: p.platform == LinkPlatform.spotify ? 'spotify' : 'youtube',
           isDownloaded: false,
+          addedAt: baseTime.subtract(Duration(milliseconds: i)),
         ),
       );
     }
@@ -320,9 +324,8 @@ class LinkImportService {
   // ---------------------------------------------------------------------------
 
   static Future<ImportPreview> _resolveYouTube(ParsedLink link) async {
-    final yt = YoutubeExplode();
     try {
-      final video = await yt.videos.get(link.id).timeout(const Duration(seconds: 15));
+      final video = await YouTubeStreamResolver.sharedYt.videos.get(link.id).timeout(const Duration(seconds: 15));
       final guess = _splitArtistTitle(video.title, video.author);
       final duration = video.duration ?? Duration.zero;
 
@@ -341,8 +344,9 @@ class LinkImportService {
         genre: meta?.genre,
         year: meta?.year ?? video.uploadDate?.year.toString(),
       );
-    } finally {
-      yt.close();
+    } catch (e) {
+      YouTubeStreamResolver.resetSharedYt();
+      rethrow;
     }
   }
 
@@ -765,70 +769,72 @@ class LinkImportService {
 
   /// Busca en YouTube el video que mejor coincide con la pista
   static Future<String?> findOnYouTube(String artist, String title, Duration duration) async {
-    final yt = YoutubeExplode();
-    try {
-      final results = await yt.search.search('$artist $title audio').timeout(const Duration(seconds: 15));
-      if (results.isEmpty) return null;
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try {
+        final results = await YouTubeStreamResolver.sharedYt.search
+            .search('$artist $title audio')
+            .timeout(const Duration(seconds: 12));
+        if (results.isEmpty) return null;
 
-      final wantTitle = _normalize(title);
-      final wantArtist = _normalize(artist.split(',').first);
-      final penalized = [
-        'live',
-        'en vivo',
-        'cover',
-        'karaoke',
-        'remix',
-        'sped up',
-        'slowed',
-        '8d',
-        'instrumental',
-        'reaction',
-        'tutorial',
-        'nightcore'
-      ].where((w) => !wantTitle.contains(w)).toList();
+        final wantTitle = _normalize(title);
+        final wantArtist = _normalize(artist.split(',').first);
+        final penalized = [
+          'live',
+          'en vivo',
+          'cover',
+          'karaoke',
+          'remix',
+          'sped up',
+          'slowed',
+          '8d',
+          'instrumental',
+          'reaction',
+          'tutorial',
+          'nightcore'
+        ].where((w) => !wantTitle.contains(w)).toList();
 
-      Video? best;
-      var bestScore = -1e9;
-      for (final v in results.take(12)) {
-        final vt = _normalize(v.title);
-        final va = _normalize(v.author);
-        var score = 0.0;
+        Video? best;
+        var bestScore = -1e9;
+        for (final v in results.take(12)) {
+          final vt = _normalize(v.title);
+          final va = _normalize(v.author);
+          var score = 0.0;
 
-        if (vt.contains(wantTitle)) score += 40;
-        for (final w in wantTitle.split(' ')) {
-          if (w.length > 2 && vt.contains(w)) score += 4;
-        }
-        if (wantArtist.isNotEmpty && (va.contains(wantArtist) || vt.contains(wantArtist))) score += 25;
-        if (v.author.endsWith(' - Topic')) score += 20;
-        if (vt.contains('official audio') || vt.contains('audio oficial')) score += 10;
-        for (final w in penalized) {
-          if (vt.contains(w)) score -= 35;
-        }
+          if (vt.contains(wantTitle)) score += 40;
+          for (final w in wantTitle.split(' ')) {
+            if (w.length > 2 && vt.contains(w)) score += 4;
+          }
+          if (wantArtist.isNotEmpty && (va.contains(wantArtist) || vt.contains(wantArtist))) score += 25;
+          if (v.author.endsWith(' - Topic')) score += 20;
+          if (vt.contains('official audio') || vt.contains('audio oficial')) score += 10;
+          for (final w in penalized) {
+            if (vt.contains(w)) score -= 35;
+          }
 
-        final vd = v.duration;
-        if (duration > Duration.zero && vd != null) {
-          final diff = (vd.inSeconds - duration.inSeconds).abs();
-          if (diff <= 3) {
-            score += 30;
-          } else if (diff <= 10) {
-            score += 15;
-          } else {
-            score -= diff.clamp(0, 120) / 2;
+          final vd = v.duration;
+          if (duration > Duration.zero && vd != null) {
+            final diff = (vd.inSeconds - duration.inSeconds).abs();
+            if (diff <= 3) {
+              score += 30;
+            } else if (diff <= 10) {
+              score += 15;
+            } else {
+              score -= diff.clamp(0, 120) / 2;
+            }
+          }
+
+          if (score > bestScore) {
+            bestScore = score;
+            best = v;
           }
         }
-
-        if (score > bestScore) {
-          bestScore = score;
-          best = v;
-        }
+        return best?.id.value;
+      } catch (e) {
+        print('YouTube match error (attempt $attempt): $e');
+        YouTubeStreamResolver.resetSharedYt();
       }
-      return best?.id.value;
-    } catch (e) {
-      print('YouTube match error: $e');
-      return null;
-    } finally {
-      yt.close();
     }
+    return null;
   }
 
   // ---------------------------------------------------------------------------

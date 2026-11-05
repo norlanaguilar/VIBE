@@ -105,14 +105,27 @@ class MiniPlayerBar extends StatelessWidget {
                       ),
                       onPressed: () => audioService.toggleLike(song),
                     ),
-                    IconButton(
-                      icon: Icon(
-                        audioService.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                        color: AppColors.primary,
-                        size: 36,
+                    if (audioService.isBuffering)
+                      const Padding(
+                        padding: EdgeInsets.all(10.0),
+                        child: SizedBox(
+                          width: 26,
+                          height: 26,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      )
+                    else
+                      IconButton(
+                        icon: Icon(
+                          audioService.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                          color: AppColors.primary,
+                          size: 36,
+                        ),
+                        onPressed: () => audioService.togglePlayPause(),
                       ),
-                      onPressed: () => audioService.togglePlayPause(),
-                    ),
                   ],
                 ),
               ),

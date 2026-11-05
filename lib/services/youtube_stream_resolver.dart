@@ -31,18 +31,36 @@ class YouTubeStreamResolver {
 
   static final Map<String, Future<File>> _activeDownloads = {};
 
+  static YoutubeExplode? _sharedYt;
+
+  /// Instancia compartida de YoutubeExplode para evitar descargar y compilar base.js en cada canción
+  static YoutubeExplode get sharedYt => _sharedYt ??= YoutubeExplode();
+
+  static void resetSharedYt() {
+    try {
+      _sharedYt?.close();
+    } catch (_) {}
+    _sharedYt = null;
+  }
+
   /// Resuelve la URL directa del audio de un video de YouTube.
   /// Prioriza youtube_explode_dart para garantizar que la URL pertenezca a la IP de este dispositivo.
   static Future<StreamAudioResult> resolveAudioStream(String videoId) async {
-    // 1. Prioridad: youtube_explode_dart (vinculado a la IP local)
-    try {
-      final yt = YoutubeExplode();
+    // 1. Prioridad: youtube_explode_dart (vinculado a la IP local) con reintento automático
+    for (int attempt = 0; attempt < 2; attempt++) {
       try {
-        final manifest = await yt.videos.streamsClient.getManifest(videoId).timeout(const Duration(seconds: 10));
+        final manifest = await sharedYt.videos.streamsClient
+            .getManifest(videoId)
+            .timeout(const Duration(seconds: 10));
         final audioStreams = manifest.audioOnly.toList();
         if (audioStreams.isNotEmpty) {
           final mp4Streams = audioStreams.where((s) => s.container == StreamContainer.mp4).toList();
-          final stream = mp4Streams.isNotEmpty ? mp4Streams.withHighestBitrate() : audioStreams.withHighestBitrate();
+          // Preferir AAC-LC (mp4a.40.2, tag 140) sobre HE-AAC SBR (mp4a.40.5, tag 139)
+          // para evitar que AVPlayer/ExoPlayer dupliquen la duración reportada
+          final aacLcStreams = mp4Streams.where((s) => s.tag != 139 && !s.codec.toString().contains('40.5')).toList();
+          final stream = aacLcStreams.isNotEmpty
+              ? aacLcStreams.withHighestBitrate()
+              : (mp4Streams.isNotEmpty ? mp4Streams.withHighestBitrate() : audioStreams.withHighestBitrate());
 
           return StreamAudioResult(
             streamUrl: stream.url.toString(),
@@ -50,11 +68,10 @@ class YouTubeStreamResolver {
             container: stream.container.name,
           );
         }
-      } finally {
-        yt.close();
+      } catch (e) {
+        print('YouTubeExplode manifest error ($videoId, attempt $attempt): $e');
+        resetSharedYt();
       }
-    } catch (e) {
-      print('YouTubeExplode manifest error ($videoId): $e');
     }
 
     // 2. Respaldo: instancias Invidious
@@ -111,7 +128,7 @@ class YouTubeStreamResolver {
       return await _activeDownloads[videoId]!;
     }
 
-    final future = _getOrDownloadInternal(videoId);
+    final future = _getOrDownloadInternal(videoId).timeout(const Duration(seconds: 35));
     _activeDownloads[videoId] = future;
     try {
       return await future;
@@ -216,22 +233,34 @@ class YouTubeStreamResolver {
       }
     }
 
-    // Intento 2 (Fallback): Descarga continua vía HttpClient con User-Agent
+    // Intento 2 (Fallback): Descarga continua vía HttpClient con User-Agent y límite de tiempo estricto
     if (!success) {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 10);
+      client.userAgent = _userAgent;
       try {
-        final client = HttpClient();
-        client.userAgent = _userAgent;
-        final req = await client.getUrl(Uri.parse(meta.streamUrl));
-        final resp = await req.close();
+        final req = await client.getUrl(Uri.parse(meta.streamUrl)).timeout(const Duration(seconds: 10));
+        if (clen > 0) {
+          req.headers.set('Range', 'bytes=0-${clen - 1}');
+        }
+        final resp = await req.close().timeout(const Duration(seconds: 10));
         if (resp.statusCode == 200 || resp.statusCode == 206) {
           final sink = tempFile.openWrite();
-          await resp.pipe(sink);
-          success = true;
+          try {
+            await resp.pipe(sink).timeout(const Duration(seconds: 25));
+            success = true;
+          } finally {
+            try {
+              await sink.close();
+            } catch (_) {}
+          }
         } else {
           throw Exception('HTTP ${resp.statusCode}');
         }
       } catch (e) {
         print('Sequential stream error: $e');
+      } finally {
+        client.close(force: true);
       }
     }
 

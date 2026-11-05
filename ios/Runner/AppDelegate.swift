@@ -6,12 +6,64 @@ import Accelerate
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var widgetChannel: FlutterMethodChannel?
+  private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    configurePlaybackAudioSession()
+
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleDidEnterBackground),
+      name: UIApplication.didEnterBackgroundNotification,
+      object: nil
+    )
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(handleAudioRouteChange),
+      name: AVAudioSession.routeChangeNotification,
+      object: nil
+    )
+
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  private func configurePlaybackAudioSession() {
+    let session = AVAudioSession.sharedInstance()
+    do {
+      if session.category != .playback || session.mode != .default {
+        try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
+      }
+      try session.setActive(true, options: [])
+    } catch {
+      // Fallback sin policy si el dispositivo no soporta longFormAudio en esa ruta
+      try? session.setCategory(.playback, mode: .default, options: [])
+      try? session.setActive(true, options: [])
+    }
+  }
+
+  @objc private func handleDidEnterBackground() {
+    configurePlaybackAudioSession()
+    if backgroundTask != .invalid {
+      UIApplication.shared.endBackgroundTask(backgroundTask)
+      backgroundTask = .invalid
+    }
+    backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "VibeAudioTransition") { [weak self] in
+      guard let self = self else { return }
+      if self.backgroundTask != .invalid {
+        UIApplication.shared.endBackgroundTask(self.backgroundTask)
+        self.backgroundTask = .invalid
+      }
+    }
+  }
+
+  @objc private func handleAudioRouteChange(_ notification: Notification) {
+    let session = AVAudioSession.sharedInstance()
+    if session.category != .playback || session.mode != .default {
+      configurePlaybackAudioSession()
+    }
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {

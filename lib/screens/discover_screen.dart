@@ -140,21 +140,12 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
     try {
       final songs = await LinkImportService.playlistToSongs(playlist);
-
-      if (playImmediately && songs.isNotEmpty && songs.first.youtubeId == null) {
-        final ytId = await LinkImportService.findOnYouTube(
-          songs.first.artist,
-          songs.first.title,
-          songs.first.duration,
-        );
-        if (ytId != null) {
-          songs[0] = songs.first.copyWith(youtubeId: ytId);
-        }
-      }
-
       await audioService.addSongs(songs, targetPlaylist: playlist.title);
 
       if (mounted) {
+        setState(() {
+          _isAddingPlaylist = false;
+        });
         final typeLabel = playlist.type == LinkType.album ? 'Álbum' : 'Playlist';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -189,7 +180,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         );
       }
     } finally {
-      if (mounted) {
+      if (mounted && _isAddingPlaylist) {
         setState(() {
           _isAddingPlaylist = false;
         });
@@ -705,7 +696,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                                   }
                                 });
                               }
-                            : () => audioService.playSong(song),
+                            : () => audioService.playPlaylist(streamingSongs, song),
                         child: Row(
                           children: [
                             if (_isSelectionMode) ...[
@@ -733,7 +724,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                                 child: Stack(
                                   children: [
                                     Positioned.fill(child: _buildCoverImage(song)),
-                                    if (isCurrent && audioService.isPlaying)
+                                    if (isCurrent && audioService.isBuffering)
+                                      Container(
+                                        color: Colors.black.withOpacity(0.5),
+                                        child: const Center(
+                                          child: SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: AppColors.primary,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    else if (isCurrent && audioService.isPlaying)
                                       Container(
                                         color: Colors.black.withOpacity(0.4),
                                         child: const Center(

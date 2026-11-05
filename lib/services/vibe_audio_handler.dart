@@ -13,6 +13,9 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> Function()? onSkipToPrevious;
   Future<void> Function()? onPlaybackCompleted;
 
+  /// Mantiene activa la sesión de reproducción de iOS mientras se cambia de pista
+  bool isTransitioning = false;
+
   VibeAudioHandler() {
     _initAudioSession();
 
@@ -26,7 +29,7 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
     // porque en iOS eso destruye inmediatamente el widget de la pantalla de bloqueo
     // y el sistema suspende la aplicación en segundo plano.
     player.processingStateStream.listen((state) {
-      if (state == ProcessingState.completed) {
+      if (state == ProcessingState.completed && !isTransitioning) {
         _handlePlaybackCompleted();
       }
     });
@@ -35,38 +38,40 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> _initAudioSession() async {
     try {
       final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration.music());
+      await session.configure(const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+        avAudioSessionMode: AVAudioSessionMode.defaultMode,
+        avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.longFormAudio,
+        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+        androidAudioAttributes: AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.music,
+          flags: AndroidAudioFlags.none,
+          usage: AndroidAudioUsage.media,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+        androidWillPauseWhenDucked: true,
+      ));
       await session.setActive(true);
-
-      // Gestionar interrupciones de audio en iOS (llamadas telefónicas, alarmas, Siri)
-      session.interruptionEventStream.listen((event) {
-        if (event.begin) {
-          switch (event.type) {
-            case AudioInterruptionType.duck:
-              player.setVolume(0.5);
-              break;
-            case AudioInterruptionType.pause:
-            case AudioInterruptionType.unknown:
-              pause();
-              break;
-          }
-        } else {
-          switch (event.type) {
-            case AudioInterruptionType.duck:
-              player.setVolume(1.0);
-              break;
-            case AudioInterruptionType.pause:
-              play();
-              break;
-            case AudioInterruptionType.unknown:
-              break;
-          }
-        }
-      });
     } catch (e) {
       print('AudioSession init error: $e');
     }
   }
+
+  void beginTransition(MediaItem item) {
+    isTransitioning = true;
+    mediaItem.add(item);
+    _broadcastState();
+  }
+
+  void endTransition() {
+    if (isTransitioning) {
+      isTransitioning = false;
+      _broadcastState();
+    }
+  }
+
+  void broadcastCurrentState() => _broadcastState();
 
   void _handlePlaybackCompleted() {
     if (onPlaybackCompleted != null) {
@@ -74,6 +79,7 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
       playbackState.add(playbackState.value.copyWith(
         processingState: AudioProcessingState.buffering,
         playing: true,
+        updatePosition: Duration.zero,
       ));
       onPlaybackCompleted!();
     } else {
@@ -84,9 +90,11 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
   void _broadcastState() {
     final playing = player.playing;
     final procState = player.processingState;
+    final keepAliveInBackground =
+        isTransitioning || (procState == ProcessingState.completed && onPlaybackCompleted != null);
 
     final AudioProcessingState audioProcState;
-    if (procState == ProcessingState.completed && onPlaybackCompleted != null) {
+    if (keepAliveInBackground) {
       audioProcState = AudioProcessingState.buffering;
     } else {
       audioProcState = const {
@@ -98,10 +106,12 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
       }[procState]!;
     }
 
+    final effectivePlaying = keepAliveInBackground ? true : playing;
+
     playbackState.add(playbackState.value.copyWith(
       controls: [
         MediaControl.skipToPrevious,
-        if (playing) MediaControl.pause else MediaControl.play,
+        if (effectivePlaying) MediaControl.pause else MediaControl.play,
         MediaControl.skipToNext,
       ],
       systemActions: const {
@@ -113,9 +123,9 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
       },
       androidCompactActionIndices: const [0, 1, 2],
       processingState: audioProcState,
-      playing: (procState == ProcessingState.completed && onPlaybackCompleted != null) ? true : playing,
-      updatePosition: player.position,
-      bufferedPosition: player.bufferedPosition,
+      playing: effectivePlaying,
+      updatePosition: isTransitioning ? Duration.zero : player.position,
+      bufferedPosition: isTransitioning ? Duration.zero : player.bufferedPosition,
       speed: player.speed,
     ));
   }
@@ -129,10 +139,19 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   /// Carga una pista con sus metadatos (título, artista, carátula) para la pantalla bloqueada
-  Future<void> loadAndPlay(MediaItem item, AudioSource source) async {
+  Future<void> loadAndPlay(MediaItem item, AudioSource source, {double volume = 1.0}) async {
+    isTransitioning = true;
     mediaItem.add(item);
-    await player.setAudioSource(source);
+    _broadcastState();
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(true);
+    } catch (_) {}
+    await player.setAudioSource(source, initialPosition: Duration.zero);
+    await player.setVolume(volume);
+    isTransitioning = false;
     unawaited(player.play());
+    _broadcastState();
   }
 
   /// Actualiza los metadatos mostrados sin recargar el audio (ej: al editar título)

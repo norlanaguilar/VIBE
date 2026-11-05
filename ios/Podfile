@@ -44,7 +44,9 @@ post_install do |installer|
         '$(inherited)',
         'PERMISSION_EVENTS=1',
         'PERMISSION_PHOTOS=1',
-        'PERMISSION_MEDIA_LIBRARY=1'
+        'PERMISSION_MEDIA_LIBRARY=1',
+        'PERMISSION_MICROPHONE=0',
+        'AUDIO_SESSION_MICROPHONE=0'
       ]
     end
   end
