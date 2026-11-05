@@ -9,20 +9,29 @@ class StreamAudioResult {
   final String streamUrl;
   final int contentLength;
   final String container;
+  final String userAgent;
   StreamAudioResult({
     required this.streamUrl,
     required this.contentLength,
     required this.container,
+    this.userAgent = YouTubeStreamResolver._userAgent,
   });
 }
 
 /// Obtiene y almacena en caché el audio de canciones de YouTube de forma ultra-rápida y confiable.
 ///
-/// Resuelve el audio directamente con `youtube_explode_dart` (generando tokens vinculados a la IP del dispositivo)
-/// y descarga en bloques controlados con encabezados de navegador para evitar errores HTTP 403 Forbidden.
+/// Resuelve el audio directamente mediante el cliente InnerTube `VISIONOS` (que no requiere
+/// GVS PO-Token ni trunca pistas musicales al llegar a 1 MB) con respaldo en `youtube_explode_dart`
+/// e Invidious.
 class YouTubeStreamResolver {
   static const _userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  static const _visionUserAgent =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
+
+  static String? _cachedVisitorData;
+  static DateTime _visitorDataExpiry = DateTime.fromMillisecondsSinceEpoch(0);
 
   static final List<String> _invidiousInstances = [
     'https://inv.nadeko.net',
@@ -43,14 +52,124 @@ class YouTubeStreamResolver {
     _sharedYt = null;
   }
 
+  /// Obtiene y almacena en caché un visitorData válido de YouTube para evitar bloqueos en pistas musicales
+  static Future<String?> getVisitorData({bool forceRefresh = false}) async {
+    final now = DateTime.now();
+    if (!forceRefresh && _cachedVisitorData != null && now.isBefore(_visitorDataExpiry)) {
+      return _cachedVisitorData;
+    }
+    try {
+      final res = await http
+          .get(
+            Uri.parse('https://www.youtube.com/sw.js_data'),
+            headers: {'User-Agent': _visionUserAgent},
+          )
+          .timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200) {
+        final match = RegExp(r'"(Cgt[A-Za-z0-9_\-%]+)"').firstMatch(res.body);
+        if (match != null) {
+          _cachedVisitorData = match.group(1);
+          _visitorDataExpiry = now.add(const Duration(minutes: 30));
+          return _cachedVisitorData;
+        }
+      }
+    } catch (_) {}
+    return _cachedVisitorData;
+  }
+
   /// Resuelve la URL directa del audio de un video de YouTube.
-  /// Prioriza youtube_explode_dart para garantizar que la URL pertenezca a la IP de este dispositivo.
   static Future<StreamAudioResult> resolveAudioStream(String videoId) async {
-    // 1. Prioridad: youtube_explode_dart (vinculado a la IP local) con reintento automático
+    // 1. Prioridad máxima: Cliente InnerTube VISIONOS (1.02)
+    // No tiene restricción GVS PO-Token ni bloqueo HTTP 403 al pasar 1 MB en canciones oficiales.
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try {
+        final visitorData = await getVisitorData(forceRefresh: attempt > 0);
+        final res = await http
+            .post(
+              Uri.parse('https://www.youtube.com/youtubei/v1/player?prettyPrint=false'),
+              headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': _visionUserAgent,
+                'X-YouTube-Client-Name': '101',
+                'X-YouTube-Client-Version': '1.02',
+                if (visitorData != null) 'X-Goog-Visitor-Id': visitorData,
+              },
+              body: json.encode({
+                'videoId': videoId,
+                'context': {
+                  'client': {
+                    'clientName': 'VISIONOS',
+                    'clientVersion': '1.02',
+                    'deviceMake': 'Apple',
+                    'deviceModel': 'RealityDevice17,1',
+                    'userAgent': _visionUserAgent,
+                    'osName': 'visionOS',
+                    'osVersion': '26.5.23O471',
+                    'hl': 'en',
+                    'gl': 'US',
+                    if (visitorData != null) 'visitorData': visitorData,
+                  },
+                },
+                'contentCheckOk': true,
+                'racyCheckOk': true,
+              }),
+            )
+            .timeout(const Duration(seconds: 10));
+
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body) as Map<String, dynamic>;
+          final adaptive = (data['streamingData']?['adaptiveFormats'] as List?) ?? [];
+          final audioFormats = adaptive.whereType<Map<String, dynamic>>().where((f) {
+            final mime = (f['mimeType'] as String?) ?? '';
+            final url = (f['url'] as String?) ?? '';
+            return url.isNotEmpty && (mime.startsWith('audio/mp4') || mime.startsWith('audio/webm'));
+          }).toList();
+
+          if (audioFormats.isNotEmpty) {
+            // Preferir itag 140 (audio/mp4 AAC-LC 128kbps) para compatibilidad nativa en iOS/Android
+            Map<String, dynamic>? selected;
+            for (final f in audioFormats) {
+              if (f['itag'] == 140) {
+                selected = f;
+                break;
+              }
+            }
+            if (selected == null) {
+              final mp4List = audioFormats.where((f) {
+                final mime = (f['mimeType'] as String?) ?? '';
+                return mime.startsWith('audio/mp4') && f['itag'] != 139 && !mime.contains('40.5');
+              }).toList();
+              final pool = mp4List.isNotEmpty ? mp4List : audioFormats;
+              pool.sort((a, b) {
+                final brA = (a['bitrate'] as num?)?.toInt() ?? 0;
+                final brB = (b['bitrate'] as num?)?.toInt() ?? 0;
+                return brB.compareTo(brA);
+              });
+              selected = pool.first;
+            }
+
+            final streamUrl = selected['url'] as String;
+            final clen = int.tryParse(selected['contentLength']?.toString() ?? '') ?? 0;
+            final mime = (selected['mimeType'] as String?) ?? '';
+
+            return StreamAudioResult(
+              streamUrl: streamUrl,
+              contentLength: clen,
+              container: mime.contains('mp4') ? 'm4a' : 'webm',
+              userAgent: _visionUserAgent,
+            );
+          }
+        }
+      } catch (e) {
+        print('InnerTube VISIONOS error ($videoId, attempt $attempt): $e');
+      }
+    }
+
+    // 2. Respaldo: youtube_explode_dart sin requireWatchPage (evita rate-limit /sorry/ de Google)
     for (int attempt = 0; attempt < 2; attempt++) {
       try {
         final manifest = await sharedYt.videos.streamsClient
-            .getManifest(videoId)
+            .getManifest(videoId, requireWatchPage: attempt > 0)
             .timeout(const Duration(seconds: 10));
         final audioStreams = manifest.audioOnly.toList();
         if (audioStreams.isNotEmpty) {
@@ -66,6 +185,7 @@ class YouTubeStreamResolver {
             streamUrl: stream.url.toString(),
             contentLength: stream.size.totalBytes,
             container: stream.container.name,
+            userAgent: _userAgent,
           );
         }
       } catch (e) {
@@ -74,7 +194,7 @@ class YouTubeStreamResolver {
       }
     }
 
-    // 2. Respaldo: instancias Invidious
+    // 3. Respaldo final: instancias Invidious
     for (final inst in _invidiousInstances) {
       try {
         final res = await http.get(
@@ -110,6 +230,7 @@ class YouTubeStreamResolver {
                 streamUrl: url,
                 contentLength: clen,
                 container: isMp4 ? 'm4a' : 'webm',
+                userAgent: _userAgent,
               );
             }
           }
@@ -176,16 +297,38 @@ class YouTubeStreamResolver {
     }
 
     bool success = false;
+    final clen = meta.contentLength > 0
+        ? meta.contentLength
+        : await _probeContentLength(meta.streamUrl, meta.userAgent);
 
-    // Intento 1: Descarga por bloques con User-Agent de navegador
-    final clen = meta.contentLength > 0 ? meta.contentLength : await _probeContentLength(meta.streamUrl);
-    if (clen > 0) {
+    // Intento 1: Descarga directa completa en una sola petición (ideal para VISIONOS hasta 15 MB)
+    if (clen > 0 && clen <= 15 * 1024 * 1024) {
       try {
-        const chunkSize = 1024 * 1024; // 1 MB
+        final r = await http.get(
+          Uri.parse(meta.streamUrl),
+          headers: {
+            'User-Agent': meta.userAgent,
+            'Range': 'bytes=0-${clen - 1}',
+            'Accept': '*/*',
+          },
+        ).timeout(const Duration(seconds: 20));
+
+        if ((r.statusCode == 200 || r.statusCode == 206) && r.bodyBytes.length >= 50000) {
+          await tempFile.writeAsBytes(r.bodyBytes, flush: true);
+          success = true;
+        }
+      } catch (e) {
+        print('Single-request download fallback ($e)');
+      }
+    }
+
+    // Intento 2: Descarga por bloques controlados
+    if (!success && clen > 0) {
+      try {
+        const chunkSize = 512 * 1024; // 512 KB
         final numChunks = (clen / chunkSize).ceil();
         final chunks = List<List<int>?>.filled(numChunks, null);
 
-        // Limitar concurrencia a 3 descargas simultáneas para evitar throttling de Google
         int index = 0;
         Future<void> worker() async {
           while (true) {
@@ -198,7 +341,7 @@ class YouTubeStreamResolver {
             final r = await http.get(
               Uri.parse(meta.streamUrl),
               headers: {
-                'User-Agent': _userAgent,
+                'User-Agent': meta.userAgent,
                 'Range': 'bytes=$start-$end',
                 'Accept': '*/*',
               },
@@ -233,11 +376,11 @@ class YouTubeStreamResolver {
       }
     }
 
-    // Intento 2 (Fallback): Descarga continua vía HttpClient con User-Agent y límite de tiempo estricto
+    // Intento 3 (Fallback): Descarga continua vía HttpClient
     if (!success) {
       final client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 10);
-      client.userAgent = _userAgent;
+      client.userAgent = meta.userAgent;
       try {
         final req = await client.getUrl(Uri.parse(meta.streamUrl)).timeout(const Duration(seconds: 10));
         if (clen > 0) {
@@ -285,11 +428,11 @@ class YouTubeStreamResolver {
     throw Exception('No se pudo descargar el audio completo de la canción.');
   }
 
-  static Future<int> _probeContentLength(String url) async {
+  static Future<int> _probeContentLength(String url, String userAgent) async {
     try {
       final res = await http.head(
         Uri.parse(url),
-        headers: {'User-Agent': _userAgent},
+        headers: {'User-Agent': userAgent},
       ).timeout(const Duration(seconds: 4));
       return int.tryParse(res.headers['content-length'] ?? '') ?? 0;
     } catch (_) {

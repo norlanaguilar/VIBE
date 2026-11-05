@@ -426,12 +426,12 @@ class AudioPlayerService extends ChangeNotifier {
       // Canciones en streaming o importadas (YouTube / Spotify): no tienen archivo o se descargaron,
       // así que aseguramos que NUNCA se pierdan ni se eliminen
       for (final cached in metadataCache.values) {
-        if (cached.youtubeId != null || cached.isStreaming) {
+        if (cached.youtubeId != null || cached.isStreaming || cached.isImported) {
           Song s = cached;
-          if (s.localAudioPath != null) {
+          if (s.localAudioPath != null && s.localAudioPath!.isNotEmpty) {
             final f = File(s.localAudioPath!);
             if (!f.existsSync() || f.lengthSync() < 50000) {
-              s = s.copyWith(localAudioPath: null, isDownloaded: false);
+              s = s.copyWith(localAudioPath: '', isDownloaded: false);
             }
           }
           if (!loadedSongs.any((item) => item.id == s.id)) {
@@ -440,7 +440,8 @@ class AudioPlayerService extends ChangeNotifier {
         }
       }
       for (final existing in _librarySongs) {
-        if ((existing.youtubeId != null || existing.isStreaming) && !loadedSongs.any((s) => s.id == existing.id)) {
+        if ((existing.youtubeId != null || existing.isStreaming || existing.isImported) &&
+            !loadedSongs.any((s) => s.id == existing.id)) {
           loadedSongs.add(existing);
         }
       }
@@ -455,7 +456,7 @@ class AudioPlayerService extends ChangeNotifier {
       // Probar duración exacta en segundo plano y corregir duraciones de archivos .m4a
       for (int i = 0; i < _librarySongs.length; i++) {
         final localPath = _librarySongs[i].localAudioPath;
-        if (localPath != null) {
+        if (localPath != null && localPath.isNotEmpty) {
           final file = File(localPath);
           if (file.existsSync()) {
             Duration? exactDur;
@@ -477,6 +478,12 @@ class AudioPlayerService extends ChangeNotifier {
 
       // Guardar caché persistente
       await _saveMetadataCache();
+
+      // Encolar automáticamente canciones importadas pendientes de descargar su audio o carátula
+      final pendingImported = _librarySongs.where((s) => s.isImported).toList();
+      if (pendingImported.isNotEmpty) {
+        enqueueForBackgroundProcessing(pendingImported);
+      }
     } catch (e) {
       print('Error loading local music: $e');
     }
@@ -603,10 +610,13 @@ class AudioPlayerService extends ChangeNotifier {
     final toInsert = <Song>[];
     for (final song in songs) {
       final needsAudio = song.localAudioPath == null ||
+          song.localAudioPath!.isEmpty ||
           !File(song.localAudioPath!).existsSync() ||
           File(song.localAudioPath!).lengthSync() < 50000 ||
           song.youtubeId == null;
-      final needsCover = song.localCoverPath == null || !File(song.localCoverPath!).existsSync();
+      final needsCover = song.localCoverPath == null ||
+          song.localCoverPath!.isEmpty ||
+          !File(song.localCoverPath!).existsSync();
 
       if (needsAudio || needsCover) {
         _backgroundQueue.removeWhere((s) => s.id == song.id);

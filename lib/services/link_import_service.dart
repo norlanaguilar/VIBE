@@ -768,61 +768,174 @@ class LinkImportService {
   }
 
   /// Busca en YouTube el video que mejor coincide con la pista
+  /// Utiliza la API JSON nativa InnerTube (`youtubei/v1/search`) para evitar parseo HTML pesado en el hilo principal
+  /// y prevenir fallos del parser de `youtube_explode_dart`.
   static Future<String?> findOnYouTube(String artist, String title, Duration duration) async {
+    final cleanTitle = title
+        .replaceAll(RegExp(r'\s*-\s*\d{4}\s*Remaster(?:ed)?.*$', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\s*\((?:[^)]*Remaster[^)]*)\)', caseSensitive: false), '')
+        .trim();
+    final effectiveTitle = cleanTitle.isNotEmpty ? cleanTitle : title;
+
+    final wantTitle = _normalize(effectiveTitle);
+    final wantArtist = _normalize(artist.split(',').first);
+    final penalized = [
+      'live',
+      'en vivo',
+      'cover',
+      'karaoke',
+      'remix',
+      'sped up',
+      'slowed',
+      '8d',
+      'instrumental',
+      'reaction',
+      'tutorial',
+      'nightcore'
+    ].where((w) => !wantTitle.contains(w)).toList();
+
+    double scoreCandidate(String rawTitle, String rawAuthor, Duration vd) {
+      final vt = _normalize(rawTitle);
+      final va = _normalize(rawAuthor);
+      var score = 0.0;
+
+      if (vt.contains(wantTitle)) score += 40;
+      for (final w in wantTitle.split(' ')) {
+        if (w.length > 2 && vt.contains(w)) score += 4;
+      }
+      if (wantArtist.isNotEmpty && (va.contains(wantArtist) || vt.contains(wantArtist))) score += 25;
+      if (rawAuthor.endsWith(' - Topic')) score += 20;
+      if (vt.contains('official audio') || vt.contains('audio oficial')) score += 10;
+      for (final w in penalized) {
+        if (vt.contains(w)) score -= 35;
+      }
+
+      if (duration > Duration.zero && vd > Duration.zero) {
+        final diff = (vd.inSeconds - duration.inSeconds).abs();
+        if (diff <= 3) {
+          score += 30;
+        } else if (diff <= 10) {
+          score += 15;
+        } else {
+          score -= diff.clamp(0, 120) / 2;
+        }
+      }
+      return score;
+    }
+
+    // 1. Prioridad máxima: Búsqueda JSON directa en InnerTube (rápida, ligera y sin errores de parser HTML)
+    final queries = <String>[
+      '$artist $effectiveTitle Official Audio',
+      if (effectiveTitle != title) '$artist $title audio',
+    ];
+
+    for (final query in queries) {
+      try {
+        final visitorData = await YouTubeStreamResolver.getVisitorData();
+        final res = await http
+            .post(
+              Uri.parse('https://www.youtube.com/youtubei/v1/search?prettyPrint=false'),
+              headers: {
+                'Content-Type': 'application/json',
+                'User-Agent':
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                if (visitorData != null) 'X-Goog-Visitor-Id': visitorData,
+              },
+              body: json.encode({
+                'query': query,
+                'context': {
+                  'client': {
+                    'clientName': 'WEB',
+                    'clientVersion': '2.20250312.04.00',
+                    'hl': 'en',
+                    'gl': 'US',
+                    if (visitorData != null) 'visitorData': visitorData,
+                  },
+                },
+              }),
+            )
+            .timeout(const Duration(seconds: 10));
+
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body);
+          final renderers = <Map<String, dynamic>>[];
+
+          void extractVideoRenderers(dynamic node) {
+            if (node is Map<String, dynamic>) {
+              if (node.containsKey('videoRenderer') && node['videoRenderer'] is Map<String, dynamic>) {
+                renderers.add(node['videoRenderer'] as Map<String, dynamic>);
+              } else {
+                for (final v in node.values) {
+                  extractVideoRenderers(v);
+                }
+              }
+            } else if (node is List) {
+              for (final item in node) {
+                extractVideoRenderers(item);
+              }
+            }
+          }
+
+          extractVideoRenderers(data);
+
+          if (renderers.isNotEmpty) {
+            String? bestId;
+            var bestScore = -1e9;
+
+            for (final r in renderers.take(15)) {
+              final videoId = r['videoId'] as String?;
+              if (videoId == null || videoId.isEmpty) continue;
+
+              String vTitle = '';
+              final titleRuns = r['title']?['runs'] as List?;
+              if (titleRuns != null && titleRuns.isNotEmpty) {
+                vTitle = titleRuns.map((e) => e['text']?.toString() ?? '').join();
+              } else if (r['title']?['simpleText'] != null) {
+                vTitle = r['title']['simpleText'].toString();
+              }
+              if (vTitle.isEmpty) continue;
+
+              String vAuthor = '';
+              final ownerRuns = (r['ownerText']?['runs'] ?? r['longBylineText']?['runs'] ?? r['shortBylineText']?['runs']) as List?;
+              if (ownerRuns != null && ownerRuns.isNotEmpty) {
+                vAuthor = ownerRuns.first['text']?.toString() ?? '';
+              }
+
+              final lengthStr = (r['lengthText']?['simpleText'] as String?) ??
+                  ((r['lengthText']?['runs'] as List?)?.isNotEmpty == true
+                      ? r['lengthText']['runs'][0]['text']?.toString()
+                      : null);
+              final vd = _parseClockDuration(lengthStr);
+
+              final score = scoreCandidate(vTitle, vAuthor, vd);
+              if (score > bestScore) {
+                bestScore = score;
+                bestId = videoId;
+              }
+            }
+
+            if (bestId != null) {
+              return bestId;
+            }
+          }
+        }
+      } catch (e) {
+        print('InnerTube search error ($query): $e');
+      }
+    }
+
+    // 2. Respaldo: youtube_explode_dart
     for (int attempt = 0; attempt < 2; attempt++) {
       try {
         final results = await YouTubeStreamResolver.sharedYt.search
-            .search('$artist $title audio')
+            .search('$artist $effectiveTitle audio')
             .timeout(const Duration(seconds: 12));
         if (results.isEmpty) return null;
-
-        final wantTitle = _normalize(title);
-        final wantArtist = _normalize(artist.split(',').first);
-        final penalized = [
-          'live',
-          'en vivo',
-          'cover',
-          'karaoke',
-          'remix',
-          'sped up',
-          'slowed',
-          '8d',
-          'instrumental',
-          'reaction',
-          'tutorial',
-          'nightcore'
-        ].where((w) => !wantTitle.contains(w)).toList();
 
         Video? best;
         var bestScore = -1e9;
         for (final v in results.take(12)) {
-          final vt = _normalize(v.title);
-          final va = _normalize(v.author);
-          var score = 0.0;
-
-          if (vt.contains(wantTitle)) score += 40;
-          for (final w in wantTitle.split(' ')) {
-            if (w.length > 2 && vt.contains(w)) score += 4;
-          }
-          if (wantArtist.isNotEmpty && (va.contains(wantArtist) || vt.contains(wantArtist))) score += 25;
-          if (v.author.endsWith(' - Topic')) score += 20;
-          if (vt.contains('official audio') || vt.contains('audio oficial')) score += 10;
-          for (final w in penalized) {
-            if (vt.contains(w)) score -= 35;
-          }
-
-          final vd = v.duration;
-          if (duration > Duration.zero && vd != null) {
-            final diff = (vd.inSeconds - duration.inSeconds).abs();
-            if (diff <= 3) {
-              score += 30;
-            } else if (diff <= 10) {
-              score += 15;
-            } else {
-              score -= diff.clamp(0, 120) / 2;
-            }
-          }
-
+          final score = scoreCandidate(v.title, v.author, v.duration ?? Duration.zero);
           if (score > bestScore) {
             bestScore = score;
             best = v;
