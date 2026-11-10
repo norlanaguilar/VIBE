@@ -1,5 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../models/song_model.dart';
 import '../services/audio_player_service.dart';
@@ -446,10 +450,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   },
                   child: Row(
                     children: [
-                      CircleAvatar(
-                        radius: 26,
-                        backgroundColor: AppColors.secondaryContainer,
-                        child: const Icon(Icons.person, color: Colors.white, size: 28),
+                      _ArtistAvatar(
+                        artistName: artistName,
+                        fallbackSong: artistSongs.isNotEmpty ? artistSongs.first : null,
                       ),
                       const SizedBox(width: 16),
                       Expanded(
@@ -459,14 +462,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             Text(
                               artistName,
                               style: AppTypography.headlineSm.copyWith(fontSize: 16, color: Colors.white),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
+                            const SizedBox(height: 2),
                             Text(
-                              '${artistSongs.length} canciones',
+                              '${artistSongs.length} ${artistSongs.length == 1 ? 'canción' : 'canciones'}',
                               style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
                             ),
                           ],
                         ),
                       ),
+                      const SizedBox(width: 8),
                       const Icon(Icons.play_circle_fill, color: AppColors.secondary, size: 32),
                     ],
                   ),
@@ -771,5 +778,183 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final minutes = d.inMinutes;
     final seconds = (d.inSeconds % 60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
+  }
+}
+
+class _ArtistAvatar extends StatefulWidget {
+  final String artistName;
+  final Song? fallbackSong;
+
+  const _ArtistAvatar({
+    required this.artistName,
+    this.fallbackSong,
+  });
+
+  @override
+  State<_ArtistAvatar> createState() => _ArtistAvatarState();
+}
+
+class _ArtistAvatarState extends State<_ArtistAvatar> {
+  static final Map<String, String> _memoryPhotoCache = {};
+  String? _localPhotoPath;
+  String? _remotePhotoUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadArtistPhoto();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ArtistAvatar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.artistName != widget.artistName) {
+      _localPhotoPath = null;
+      _remotePhotoUrl = null;
+      _loadArtistPhoto();
+    }
+  }
+
+  String _extractPrimaryArtist(String raw) {
+    final cleaned = raw
+        .split(RegExp(r'\s*(?:&|,|feat\.?|ft\.?|x|\/|;)\s*', caseSensitive: false))
+        .first
+        .trim();
+    return cleaned.isNotEmpty ? cleaned : raw.trim();
+  }
+
+  Future<void> _loadArtistPhoto() async {
+    final primary = _extractPrimaryArtist(widget.artistName);
+    if (primary.isEmpty ||
+        primary.toLowerCase() == 'artista desconocido' ||
+        primary.toLowerCase() == 'unknown artist') {
+      return;
+    }
+
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final photosDir = Directory(path.join(docsDir.path, 'artist_photos'));
+      if (!photosDir.existsSync()) {
+        await photosDir.create(recursive: true);
+      }
+
+      final safeKey = primary.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_');
+      final cachedFile = File(path.join(photosDir.path, 'artist_$safeKey.jpg'));
+      if (cachedFile.existsSync() && cachedFile.lengthSync() > 500) {
+        if (mounted) {
+          setState(() {
+            _localPhotoPath = cachedFile.path;
+          });
+        }
+        return;
+      }
+
+      if (_memoryPhotoCache.containsKey(primary)) {
+        if (mounted) {
+          setState(() {
+            _remotePhotoUrl = _memoryPhotoCache[primary];
+          });
+        }
+        return;
+      }
+
+      final uri = Uri.parse(
+        'https://api.deezer.com/search/artist?q=${Uri.encodeComponent(primary)}&limit=1',
+      );
+      final response = await http.get(uri).timeout(const Duration(seconds: 6));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final list = data['data'] as List?;
+        if (list != null && list.isNotEmpty) {
+          final first = list.first as Map<String, dynamic>;
+          final picUrl = (first['picture_medium'] ?? first['picture_big'] ?? first['picture'])
+              ?.toString();
+          if (picUrl != null && picUrl.startsWith('http')) {
+            _memoryPhotoCache[primary] = picUrl;
+            if (mounted) {
+              setState(() {
+                _remotePhotoUrl = picUrl;
+              });
+            }
+            // Guardar en caché local para uso sin conexión
+            final imgResp = await http.get(Uri.parse(picUrl)).timeout(const Duration(seconds: 8));
+            if (imgResp.statusCode == 200 && imgResp.bodyBytes.length > 500) {
+              await cachedFile.writeAsBytes(imgResp.bodyBytes, flush: true);
+              if (mounted) {
+                setState(() {
+                  _localPhotoPath = cachedFile.path;
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Usa la carátula de respaldo si no hay conexión
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 52,
+      height: 52,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          colors: [AppColors.secondaryContainer, AppColors.primaryContainer],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.14),
+          width: 1.2,
+        ),
+      ),
+      child: ClipOval(
+        child: _buildImageContent(),
+      ),
+    );
+  }
+
+  Widget _buildImageContent() {
+    if (_localPhotoPath != null && File(_localPhotoPath!).existsSync()) {
+      return Image.file(
+        File(_localPhotoPath!),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _buildSongCoverFallback(),
+      );
+    }
+    if (_remotePhotoUrl != null && _remotePhotoUrl!.startsWith('http')) {
+      return Image.network(
+        _remotePhotoUrl!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _buildSongCoverFallback(),
+      );
+    }
+    return _buildSongCoverFallback();
+  }
+
+  Widget _buildSongCoverFallback() {
+    final song = widget.fallbackSong;
+    if (song != null) {
+      if (song.localCoverPath != null && File(song.localCoverPath!).existsSync()) {
+        return Image.file(
+          File(song.localCoverPath!),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.white, size: 26),
+        );
+      }
+      if (song.coverUrl != null && song.coverUrl!.startsWith('http')) {
+        return Image.network(
+          song.coverUrl!,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.white, size: 26),
+        );
+      }
+    }
+    return const Center(
+      child: Icon(Icons.person, color: Colors.white, size: 26),
+    );
   }
 }

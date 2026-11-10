@@ -71,62 +71,72 @@ class SettingsScreen extends StatelessWidget {
             // Ecualizador Profesional de Estudio (Única sección visible en Ajustes)
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 6.0),
                 child: GlassContainer(
                   borderRadius: BorderRadius.circular(24),
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(18),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Encabezado del Ecualizador
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Ecualizador Maestro',
-                                style: AppTypography.headlineSm.copyWith(
-                                  color: Colors.white,
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.bold,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Ecualizador Maestro',
+                                  style: AppTypography.headlineSm.copyWith(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'Procesador paramétrico de 5 bandas',
-                                style: AppTypography.bodySm.copyWith(
-                                  color: AppColors.onSurfaceVariant,
-                                  fontSize: 12,
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Procesador paramétrico de 5 bandas',
+                                  style: AppTypography.bodySm.copyWith(
+                                    color: AppColors.onSurfaceVariant,
+                                    fontSize: 11,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
+                          const SizedBox(width: 10),
                           TextButton.icon(
                             onPressed: () => audioService.resetEqualizer(),
                             style: TextButton.styleFrom(
                               backgroundColor: AppColors.surfaceContainerHigh,
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              visualDensity: VisualDensity.compact,
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                             ),
-                            icon: const Icon(Icons.restart_alt, size: 16, color: AppColors.secondary),
+                            icon: const Icon(Icons.restart_alt, size: 15, color: AppColors.secondary),
                             label: Text(
                               'Restablecer',
                               style: AppTypography.bodySm.copyWith(
                                 color: AppColors.secondary,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 12,
+                                fontSize: 11,
                               ),
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 14),
 
                       // Gráfica de Curva de Respuesta de Frecuencia en Tiempo Real
                       Container(
-                        height: 140,
+                        height: 115,
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                         decoration: BoxDecoration(
@@ -139,7 +149,7 @@ class SettingsScreen extends StatelessWidget {
                           size: Size.infinite,
                         ),
                       ),
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 14),
 
                       // Selector de Perfiles de Sonido
                       Text(
@@ -150,7 +160,7 @@ class SettingsScreen extends StatelessWidget {
                           letterSpacing: 1.2,
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: Row(
@@ -179,11 +189,11 @@ class SettingsScreen extends StatelessWidget {
                           }).toList(),
                         ),
                       ),
-                      const SizedBox(height: 22),
+                      const SizedBox(height: 16),
 
                       // 5 Faders de Frecuencia con Lectura en dB
                       SizedBox(
-                        height: 250,
+                        height: 195,
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -202,7 +212,7 @@ class SettingsScreen extends StatelessWidget {
             ),
 
             const SliverToBoxAdapter(
-              child: SizedBox(height: 100),
+              child: SizedBox(height: 120),
             ),
           ],
         ),

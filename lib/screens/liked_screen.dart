@@ -680,7 +680,7 @@ class LikedScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
       child: GlassContainer(
         borderRadius: BorderRadius.circular(20),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         onTap: () => _showPlaylistDetailSheet(
           context,
           audioService,
@@ -688,11 +688,12 @@ class LikedScreen extends StatelessWidget {
           isLikedPlaylist: isLikedCard,
         ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             // Icono o carátula con estilo de tarjeta Me Gusta
             Container(
-              width: 80,
-              height: 80,
+              width: 72,
+              height: 72,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
                 gradient: LinearGradient(
@@ -705,7 +706,7 @@ class LikedScreen extends StatelessWidget {
                 boxShadow: [
                   BoxShadow(
                     color: AppColors.primaryContainer.withOpacity(0.4),
-                    blurRadius: 16,
+                    blurRadius: 14,
                     offset: const Offset(0, 4),
                   ),
                 ],
@@ -720,7 +721,7 @@ class LikedScreen extends StatelessWidget {
                           Container(
                             color: Colors.black.withOpacity(0.25),
                             child: const Center(
-                              child: Icon(Icons.queue_music, color: Colors.white, size: 34),
+                              child: Icon(Icons.queue_music, color: Colors.white, size: 30),
                             ),
                           ),
                         ],
@@ -729,39 +730,44 @@ class LikedScreen extends StatelessWidget {
                         child: Icon(
                           isLikedCard ? Icons.favorite : Icons.queue_music,
                           color: Colors.white,
-                          size: 40,
+                          size: 36,
                         ),
                       ),
               ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 14),
 
-            // Texto y botones de acción con el mismo diseño
+            // Texto y botones de acción simétricos dentro del ancho de la tarjeta
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Expanded(
                         child: Text(
                           title,
                           style: AppTypography.headlineSm.copyWith(
                             color: AppColors.onSurface,
+                            fontSize: 18,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (!isLikedCard)
+                      if (!isLikedCard) ...[
+                        const SizedBox(width: 8),
                         InkWell(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(10),
                           onTap: () => _confirmDeletePlaylist(context, audioService, title),
                           child: const Padding(
                             padding: EdgeInsets.all(4.0),
                             child: Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
                           ),
                         ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 2),
@@ -771,46 +777,62 @@ class LikedScreen extends StatelessWidget {
                       color: AppColors.onSurfaceVariant,
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
 
                   Row(
                     children: [
-                      ElevatedButton.icon(
-                        onPressed: songs.isEmpty
-                            ? null
-                            : () => audioService.playPlaylist(songs, songs.first),
-                        icon: const Icon(Icons.play_arrow, size: 18),
-                        label: const Text('REPRODUCIR'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: AppColors.onPrimary,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: songs.isEmpty
+                              ? null
+                              : () => audioService.playPlaylist(songs, songs.first),
+                          icon: const Icon(Icons.play_arrow, size: 16),
+                          label: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('REPRODUCIR', maxLines: 1),
                           ),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          textStyle: AppTypography.labelCaps.copyWith(fontSize: 10),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: AppColors.onPrimary,
+                            minimumSize: const Size(0, 34),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                            textStyle: AppTypography.labelCaps.copyWith(fontSize: 10),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: songs.isEmpty
-                            ? null
-                            : () {
-                                if (!audioService.isShuffle) {
-                                  audioService.toggleShuffle();
-                                }
-                                audioService.playPlaylist(songs, songs.first);
-                              },
-                        icon: const Icon(Icons.shuffle, size: 15),
-                        label: const Text('ALEATORIO'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.onSurface,
-                          side: BorderSide(color: AppColors.outlineVariant.withOpacity(0.5)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: songs.isEmpty
+                              ? null
+                              : () {
+                                  if (!audioService.isShuffle) {
+                                    audioService.toggleShuffle();
+                                  }
+                                  audioService.playPlaylist(songs, songs.first);
+                                },
+                          icon: const Icon(Icons.shuffle, size: 14),
+                          label: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('ALEATORIO', maxLines: 1),
                           ),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          textStyle: AppTypography.labelCaps.copyWith(fontSize: 10),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.onSurface,
+                            minimumSize: const Size(0, 34),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                            side: BorderSide(color: AppColors.outlineVariant.withOpacity(0.5)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                            textStyle: AppTypography.labelCaps.copyWith(fontSize: 10),
+                          ),
                         ),
                       ),
                     ],
