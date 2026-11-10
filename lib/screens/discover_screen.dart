@@ -1,8 +1,6 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../models/song_model.dart';
 import '../services/audio_player_service.dart';
 import '../services/link_import_service.dart';
 import '../theme/app_colors.dart';
@@ -23,8 +21,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   bool _isLoading = false;
   bool _isAddingPlaylist = false;
   bool _showAllPlaylistTracks = false;
-  bool _isSelectionMode = false;
-  final Set<String> _selectedSongIds = {};
   String? _errorMessage;
   ImportResult? _previewResult;
   ParsedLink? _detectedLink;
@@ -32,22 +28,20 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   @override
   void initState() {
     super.initState();
-    _urlController.addListener(_onUrlChanged);
+    _urlController.addListener(_onInputChanged);
   }
 
-  void _onUrlChanged() {
+  void _onInputChanged() {
     final text = _urlController.text.trim();
     final parsed = LinkImportService.parse(text);
-    if (parsed?.url != _detectedLink?.url) {
-      setState(() {
-        _detectedLink = parsed;
-        if (text.isEmpty) {
-          _previewResult = null;
-          _errorMessage = null;
-          _showAllPlaylistTracks = false;
-        }
-      });
-    }
+    setState(() {
+      _detectedLink = parsed;
+      if (text.isEmpty) {
+        _previewResult = null;
+        _errorMessage = null;
+        _showAllPlaylistTracks = false;
+      }
+    });
   }
 
   Future<void> _pasteFromClipboard() async {
@@ -88,7 +82,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     }
   }
 
-  Future<void> _addSongToLibrary(AudioPlayerService audioService, ImportPreview preview, {bool playImmediately = false}) async {
+  Future<void> _addSongToLibrary(
+    AudioPlayerService audioService,
+    ImportPreview preview, {
+    bool playImmediately = false,
+  }) async {
     try {
       final song = await LinkImportService.toSong(preview);
       audioService.addSong(song);
@@ -205,174 +203,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     return '$minutes min';
   }
 
-  Future<void> _confirmDeleteSelected(BuildContext context, AudioPlayerService audioService) async {
-    final count = _selectedSongIds.length;
-    if (count == 0) return;
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surfaceContainerHigh,
-        title: const Text('Eliminar canciones', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        content: Text(
-          '¿Deseas eliminar las $count canciones seleccionadas de tu biblioteca y del almacenamiento?',
-          style: const TextStyle(color: AppColors.onSurfaceVariant),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Eliminar', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      await audioService.deleteSongs(_selectedSongIds.toList());
-      setState(() {
-        _selectedSongIds.clear();
-        _isSelectionMode = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('$count canciones eliminadas de la biblioteca'),
-            backgroundColor: AppColors.primaryContainer,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _showDeletePlaylistDialog(BuildContext context, AudioPlayerService audioService) async {
-    final playlists = audioService.userPlaylists.keys.toList();
-    if (playlists.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No hay playlists importadas en la biblioteca.')),
-      );
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.surfaceContainerLow,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 20.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.playlist_remove, color: Colors.redAccent, size: 24),
-                  const SizedBox(width: 10),
-                  const Text(
-                    'Eliminar Playlist',
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: AppColors.onSurfaceVariant),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Selecciona una playlist para eliminarla:',
-                style: TextStyle(color: AppColors.onSurfaceVariant, fontSize: 13),
-              ),
-              const SizedBox(height: 12),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: playlists.length,
-                  itemBuilder: (c, i) {
-                    final name = playlists[i];
-                    final songCount = audioService.userPlaylists[name]?.length ?? 0;
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: AppColors.surfaceContainerHigh,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.queue_music, color: AppColors.secondary, size: 20),
-                      ),
-                      title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      subtitle: Text('$songCount canciones', style: const TextStyle(color: AppColors.onSurfaceVariant, fontSize: 12)),
-                      trailing: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _confirmDeletePlaylist(context, audioService, name);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _confirmDeletePlaylist(BuildContext context, AudioPlayerService audioService, String playlistName) async {
-    final songCount = audioService.userPlaylists[playlistName]?.length ?? 0;
-    final action = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surfaceContainerHigh,
-        title: Text('Eliminar "$playlistName"', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        content: Text(
-          '¿Qué deseas hacer con la playlist "$playlistName" ($songCount canciones)?',
-          style: const TextStyle(color: AppColors.onSurfaceVariant),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'cancel'),
-            child: const Text('Cancelar'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'only_playlist'),
-            child: const Text('Solo Playlist', style: TextStyle(color: AppColors.secondary)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-            onPressed: () => Navigator.pop(ctx, 'all'),
-            child: const Text('Playlist y Canciones', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    if (action == 'all') {
-      await audioService.deletePlaylistWithSongs(playlistName, deleteSongsFromLibrary: true);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Playlist "$playlistName" y sus canciones eliminadas')),
-        );
-      }
-    } else if (action == 'only_playlist') {
-      await audioService.deletePlaylistWithSongs(playlistName, deleteSongsFromLibrary: false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Playlist "$playlistName" eliminada')),
-        );
-      }
-    }
-  }
-
   @override
   void dispose() {
     _urlController.dispose();
@@ -383,7 +213,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   @override
   Widget build(BuildContext context) {
     final audioService = Provider.of<AudioPlayerService>(context);
-    final streamingSongs = audioService.librarySongs.where((s) => s.isImported).toList();
+    final hasText = _urlController.text.trim().isNotEmpty;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -391,7 +221,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         child: CustomScrollView(
           physics: const BouncingScrollPhysics(),
           slivers: [
-            // Header
+            // Encabezado: Explorar
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
@@ -406,21 +236,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                             color: AppColors.primaryContainer.withOpacity(0.35),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Icon(Icons.cloud_download, color: AppColors.primary, size: 24),
+                          child: const Icon(Icons.explore, color: AppColors.primary, size: 24),
                         ),
                         const SizedBox(width: 12),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Descubrir',
+                              'Explorar',
                               style: AppTypography.headlineSm.copyWith(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                             Text(
-                              'Importa desde YouTube y Spotify sin límites',
+                              'Importa desde YouTube y Spotify',
                               style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
                             ),
                           ],
@@ -429,7 +259,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // Input Card
+                    // Barra de búsqueda de canciones o enlaces
                     GlassContainer(
                       borderRadius: BorderRadius.circular(16),
                       backgroundColor: AppColors.surfaceContainerLow.withOpacity(0.85),
@@ -438,7 +268,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                         children: [
                           Row(
                             children: [
-                              _buildPlatformBadge(_detectedLink),
+                              _buildPlatformBadge(_detectedLink, hasText: hasText),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: TextField(
@@ -448,15 +278,18 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                                   textInputAction: TextInputAction.search,
                                   onSubmitted: (_) => _fetchPreview(),
                                   decoration: InputDecoration(
-                                    hintText: 'Pega enlace de YouTube o Spotify...',
-                                    hintStyle: TextStyle(color: AppColors.onSurfaceVariant.withOpacity(0.7), fontSize: 13),
+                                    hintText: 'Nombre de canción o enlace de YouTube / Spotify...',
+                                    hintStyle: TextStyle(
+                                      color: AppColors.onSurfaceVariant.withOpacity(0.7),
+                                      fontSize: 13,
+                                    ),
                                     border: InputBorder.none,
                                     isDense: true,
                                     contentPadding: const EdgeInsets.symmetric(vertical: 8),
                                   ),
                                 ),
                               ),
-                              if (_urlController.text.isNotEmpty)
+                              if (hasText)
                                 IconButton(
                                   icon: const Icon(Icons.close, size: 20, color: AppColors.onSurfaceVariant),
                                   onPressed: () {
@@ -494,7 +327,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                     )
                                   : const Icon(Icons.search, size: 20),
-                              label: Text(_isLoading ? 'Obteniendo metadatos...' : 'Analizar Enlace'),
+                              label: Text(
+                                _isLoading
+                                    ? 'Buscando...'
+                                    : (_detectedLink != null ? 'Analizar Enlace' : 'Buscar Canción'),
+                              ),
                             ),
                           ),
                         ],
@@ -525,386 +362,51 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       ),
                     ],
 
-                    // Preview Card
+                    // Resultados de enlace o de búsqueda por nombre
                     if (_previewResult != null) ...[
                       const SizedBox(height: 16),
                       if (_previewResult!.isPlaylist)
                         _buildPlaylistPreviewCard(context, audioService, _previewResult!.playlist!)
                       else if (_previewResult!.isSingleTrack)
-                        _buildPreviewCard(context, audioService, _previewResult!.singleTrack!),
+                        _buildPreviewCard(context, audioService, _previewResult!.singleTrack!)
+                      else if (_previewResult!.isSearchResults)
+                        _buildSearchResultsSection(context, audioService, _previewResult!.searchResults!),
+                    ] else if (!_isLoading && _errorMessage == null) ...[
+                      const SizedBox(height: 48),
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons.travel_explore,
+                                size: 54,
+                                color: AppColors.onSurfaceVariant.withOpacity(0.35),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Busca cualquier canción o pega un enlace',
+                                style: AppTypography.bodyLg.copyWith(color: AppColors.onSurfaceVariant),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Escribe el nombre de una canción para buscar su audio oficial en YouTube o pega un enlace de YouTube o Spotify.',
+                                style: AppTypography.bodySm.copyWith(
+                                  color: AppColors.onSurfaceVariant.withOpacity(0.7),
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ],
                   ],
                 ),
               ),
             ),
 
-            // Section Header: Canciones en tu Biblioteca
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: _isSelectionMode
-                    ? GlassContainer(
-                        borderRadius: BorderRadius.circular(12),
-                        backgroundColor: AppColors.primaryContainer.withOpacity(0.3),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        child: Row(
-                          children: [
-                            IconButton(
-                              icon: Icon(
-                                (_selectedSongIds.length == streamingSongs.length && streamingSongs.isNotEmpty)
-                                    ? Icons.check_box
-                                    : Icons.check_box_outline_blank,
-                                color: AppColors.primary,
-                                size: 22,
-                              ),
-                              tooltip: _selectedSongIds.length == streamingSongs.length
-                                  ? 'Deseleccionar todas'
-                                  : 'Seleccionar todas',
-                              onPressed: () {
-                                setState(() {
-                                  if (_selectedSongIds.length == streamingSongs.length) {
-                                    _selectedSongIds.clear();
-                                  } else {
-                                    _selectedSongIds.addAll(streamingSongs.map((s) => s.id));
-                                  }
-                                });
-                              },
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${_selectedSongIds.length} seleccionadas',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
-                            const Spacer(),
-                            if (_selectedSongIds.isNotEmpty)
-                              ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.redAccent,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                ),
-                                icon: const Icon(Icons.delete, size: 16),
-                                label: Text(
-                                  'Eliminar (${_selectedSongIds.length})',
-                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                                ),
-                                onPressed: () => _confirmDeleteSelected(context, audioService),
-                              ),
-                            const SizedBox(width: 6),
-                            IconButton(
-                              icon: const Icon(Icons.close, color: Colors.white, size: 20),
-                              tooltip: 'Cancelar selección',
-                              onPressed: () {
-                                setState(() {
-                                  _isSelectionMode = false;
-                                  _selectedSongIds.clear();
-                                });
-                              },
-                            ),
-                          ],
-                        ),
-                      )
-                    : Row(
-                        children: [
-                          const Icon(Icons.library_music, color: AppColors.secondary, size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            'En tu Biblioteca',
-                            style: AppTypography.headlineSm.copyWith(
-                              fontSize: 16,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${streamingSongs.length}',
-                            style: AppTypography.monoLabel.copyWith(color: AppColors.secondary),
-                          ),
-                          const Spacer(),
-                          if (audioService.userPlaylists.isNotEmpty)
-                            IconButton(
-                              icon: const Icon(Icons.playlist_remove, color: Colors.redAccent, size: 20),
-                              tooltip: 'Eliminar una playlist',
-                              onPressed: () => _showDeletePlaylistDialog(context, audioService),
-                            ),
-                          if (streamingSongs.isNotEmpty)
-                            IconButton(
-                              icon: const Icon(Icons.checklist, color: AppColors.primary, size: 20),
-                              tooltip: 'Seleccionar canciones',
-                              onPressed: () {
-                                setState(() {
-                                  _isSelectionMode = true;
-                                  _selectedSongIds.clear();
-                                });
-                              },
-                            ),
-                        ],
-                      ),
-              ),
-            ),
-
-            // Lista de canciones en streaming
-            if (streamingSongs.isEmpty)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(32.0),
-                  child: Center(
-                    child: Column(
-                      children: [
-                        Icon(Icons.queue_music, size: 48, color: AppColors.onSurfaceVariant.withOpacity(0.4)),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Aún no has agregado canciones en streaming',
-                          style: AppTypography.bodyLg.copyWith(color: AppColors.onSurfaceVariant),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Copia un link de YouTube o Spotify y presiona "Agregar a la Biblioteca". Se reproducirá directo sin ocupar almacenamiento.',
-                          style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant.withOpacity(0.7)),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              )
-            else
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final song = streamingSongs[index];
-                    final isCurrent = audioService.currentSong?.id == song.id;
-
-                    return Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 4.0),
-                      child: GlassContainer(
-                        borderRadius: BorderRadius.circular(12),
-                        backgroundColor: isCurrent
-                            ? AppColors.primaryContainer.withOpacity(0.2)
-                            : AppColors.surfaceContainerLow.withOpacity(0.6),
-                        padding: const EdgeInsets.all(8.0),
-                        onTap: _isSelectionMode
-                            ? () {
-                                setState(() {
-                                  if (_selectedSongIds.contains(song.id)) {
-                                    _selectedSongIds.remove(song.id);
-                                  } else {
-                                    _selectedSongIds.add(song.id);
-                                  }
-                                });
-                              }
-                            : () => audioService.playPlaylist(streamingSongs, song),
-                        child: Row(
-                          children: [
-                            if (_isSelectionMode) ...[
-                              Checkbox(
-                                value: _selectedSongIds.contains(song.id),
-                                activeColor: AppColors.primary,
-                                checkColor: Colors.black,
-                                onChanged: (val) {
-                                  setState(() {
-                                    if (val == true) {
-                                      _selectedSongIds.add(song.id);
-                                    } else {
-                                      _selectedSongIds.remove(song.id);
-                                    }
-                                  });
-                                },
-                              ),
-                              const SizedBox(width: 4),
-                            ],
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: SizedBox(
-                                width: 48,
-                                height: 48,
-                                child: Stack(
-                                  children: [
-                                    Positioned.fill(child: _buildCoverImage(song)),
-                                    if (isCurrent && audioService.isBuffering)
-                                      Container(
-                                        color: Colors.black.withOpacity(0.5),
-                                        child: const Center(
-                                          child: SizedBox(
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: AppColors.primary,
-                                            ),
-                                          ),
-                                        ),
-                                      )
-                                    else if (isCurrent && audioService.isPlaying)
-                                      Container(
-                                        color: Colors.black.withOpacity(0.4),
-                                        child: const Center(
-                                          child: Icon(Icons.equalizer, color: AppColors.primary, size: 24),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          song.title,
-                                          style: AppTypography.bodyLg.copyWith(
-                                            fontSize: 15,
-                                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
-                                            color: isCurrent ? AppColors.primary : AppColors.onSurface,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      _buildPlatformPill(song.source),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${song.artist} • ${_formatDuration(song.duration)}',
-                                    style: AppTypography.bodySm.copyWith(
-                                      fontSize: 12,
-                                      color: AppColors.onSurfaceVariant,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            if (!_isSelectionMode) ...[
-                              if (song.isDownloaded) ...[
-                                IconButton(
-                                  icon: const Icon(Icons.download_done_rounded, color: AppColors.secondary, size: 20),
-                                  tooltip: 'Disponible sin conexión',
-                                  onPressed: () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Esta canción ya está descargada en tu dispositivo.'),
-                                        duration: Duration(seconds: 2),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ] else if (audioService.isSongDownloading(song.id)) ...[
-                                const Padding(
-                                  padding: EdgeInsets.all(12.0),
-                                  child: SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
-                                  ),
-                                ),
-                              ] else ...[
-                                IconButton(
-                                  icon: const Icon(Icons.arrow_circle_down_rounded, color: AppColors.onSurfaceVariant, size: 22),
-                                  tooltip: 'Descargar para reproducir sin internet',
-                                  onPressed: () async {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Descargando "${song.title}" para escuchar sin internet...'),
-                                        backgroundColor: AppColors.primaryContainer,
-                                      ),
-                                    );
-                                    try {
-                                      await audioService.downloadSongForOffline(song);
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text('¡"${song.title}" descargada para escuchar offline!'),
-                                            backgroundColor: Colors.green,
-                                          ),
-                                        );
-                                      }
-                                    } catch (e) {
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text('Error al descargar: $e'),
-                                            backgroundColor: Colors.redAccent,
-                                          ),
-                                        );
-                                      }
-                                    }
-                                  },
-                                ),
-                              ],
-                              PopupMenuButton<String>(
-                                icon: const Icon(Icons.more_vert, color: AppColors.onSurfaceVariant, size: 20),
-                                color: AppColors.surfaceContainerHigh,
-                                onSelected: (val) async {
-                                  if (val == 'download') {
-                                    await audioService.downloadSongForOffline(song);
-                                  } else if (val == 'delete') {
-                                    final confirm = await showDialog<bool>(
-                                      context: context,
-                                      builder: (ctx) => AlertDialog(
-                                        backgroundColor: AppColors.surfaceContainerHigh,
-                                        title: const Text('Quitar de biblioteca'),
-                                        content: Text('¿Deseas quitar "${song.title}" de tu biblioteca?'),
-                                        actions: [
-                                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-                                          ElevatedButton(
-                                            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                                            onPressed: () => Navigator.pop(ctx, true),
-                                            child: const Text('Quitar', style: TextStyle(color: Colors.white)),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                    if (confirm == true) {
-                                      await audioService.removeStreamingSong(song);
-                                    }
-                                  }
-                                },
-                                itemBuilder: (ctx) => [
-                                  if (!song.isDownloaded)
-                                    const PopupMenuItem(
-                                      value: 'download',
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.download, color: AppColors.primary, size: 18),
-                                          SizedBox(width: 8),
-                                          Text('Descargar para escuchar offline'),
-                                        ],
-                                      ),
-                                    ),
-                                  const PopupMenuItem(
-                                    value: 'delete',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-                                        SizedBox(width: 8),
-                                        Text('Quitar de biblioteca', style: TextStyle(color: Colors.redAccent)),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                  childCount: streamingSongs.length,
-                ),
-              ),
-
-            // Espacio final para que el miniplayer no tape la última canción
             const SliverToBoxAdapter(
               child: SizedBox(height: 100),
             ),
@@ -914,15 +416,160 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     );
   }
 
-  Widget _buildPlatformBadge(ParsedLink? link) {
+  Widget _buildSearchResultsSection(
+    BuildContext context,
+    AudioPlayerService audioService,
+    List<ImportPreview> results,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.verified_outlined, color: AppColors.secondary, size: 18),
+            const SizedBox(width: 8),
+            Text(
+              'Opciones encontradas (${results.length})',
+              style: AppTypography.headlineSm.copyWith(
+                fontSize: 16,
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ...results.map((preview) => _buildSearchOptionCard(context, audioService, preview)),
+      ],
+    );
+  }
+
+  Widget _buildSearchOptionCard(
+    BuildContext context,
+    AudioPlayerService audioService,
+    ImportPreview preview,
+  ) {
+    final isAlreadyAdded = audioService.containsSong(preview.songId);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: GlassContainer(
+        borderRadius: BorderRadius.circular(16),
+        backgroundColor: AppColors.surfaceContainerHigh.withOpacity(0.75),
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox(
+                width: 62,
+                height: 62,
+                child: preview.coverUrl != null
+                    ? Image.network(
+                        preview.coverUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _coverPlaceholder(),
+                      )
+                    : _coverPlaceholder(),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    preview.title,
+                    style: AppTypography.bodyLg.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    preview.artist,
+                    style: AppTypography.bodySm.copyWith(
+                      color: AppColors.secondary,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${preview.album} • ${_formatDuration(preview.duration)}',
+                    style: AppTypography.bodySm.copyWith(
+                      color: AppColors.onSurfaceVariant,
+                      fontSize: 11,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.play_circle_fill, color: AppColors.secondary, size: 32),
+              tooltip: 'Reproducir y agregar',
+              onPressed: () => _addSongToLibrary(audioService, preview, playImmediately: true),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isAlreadyAdded ? AppColors.surfaceContainerLow : AppColors.primary,
+                foregroundColor: isAlreadyAdded ? AppColors.onSurfaceVariant : AppColors.onPrimary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                minimumSize: Size.zero,
+              ),
+              onPressed: () => _addSongToLibrary(audioService, preview),
+              icon: Icon(isAlreadyAdded ? Icons.check : Icons.add, size: 16),
+              label: Text(
+                isAlreadyAdded ? 'Agregada' : 'Agregar',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlatformBadge(ParsedLink? link, {bool hasText = false}) {
     if (link == null) {
+      if (hasText) {
+        const ytColor = Color(0xFFFF0000);
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: ytColor.withOpacity(0.18),
+            border: Border.all(color: ytColor.withOpacity(0.5)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.play_arrow, size: 14, color: ytColor),
+              SizedBox(width: 4),
+              Text(
+                'YouTube',
+                style: TextStyle(color: ytColor, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        );
+      }
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
           color: AppColors.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: const Icon(Icons.link, size: 16, color: AppColors.onSurfaceVariant),
+        child: const Icon(Icons.search, size: 16, color: AppColors.onSurfaceVariant),
       );
     }
 
@@ -956,24 +603,6 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildPlatformPill(String source) {
-    final isSpotify = source == 'spotify';
-    final color = isSpotify ? const Color(0xFF1DB954) : const Color(0xFFFF4E45);
-    final label = isSpotify ? 'SPOTIFY' : 'YOUTUBE';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.5),
       ),
     );
   }
@@ -1393,24 +1022,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     return Container(
       color: AppColors.surfaceContainerHigh,
       child: const Center(
-        child: Icon(Icons.music_note, color: AppColors.onSurfaceVariant, size: 36),
+        child: Icon(Icons.music_note, color: AppColors.onSurfaceVariant, size: 28),
       ),
     );
-  }
-
-  Widget _buildCoverImage(Song song) {
-    if (song.localCoverPath != null && File(song.localCoverPath!).existsSync()) {
-      return Image.file(
-        File(song.localCoverPath!),
-        fit: BoxFit.cover,
-      );
-    } else if (song.coverUrl != null && song.coverUrl!.startsWith('http')) {
-      return Image.network(
-        song.coverUrl!,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => _coverPlaceholder(),
-      );
-    }
-    return _coverPlaceholder();
   }
 }

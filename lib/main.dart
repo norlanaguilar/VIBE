@@ -13,7 +13,7 @@ Future<void> main() async {
     builder: () => VibeAudioHandler(),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.example.vibe_local.audio',
-      androidNotificationChannelName: 'VibeLocal Audio Playback',
+      androidNotificationChannelName: 'Vibe App Reproducción',
       androidNotificationOngoing: true,
       androidStopForegroundOnPause: true,
     ),
@@ -35,7 +35,7 @@ class VibeLocalApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'VibeLocal',
+      title: 'Vibe App',
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData.dark().copyWith(

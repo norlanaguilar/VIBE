@@ -127,7 +127,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
                   // Brand Name
                   Text(
-                    'VibeLocal',
+                    'Vibe App',
                     style: AppTypography.displayLg.copyWith(
                       color: AppColors.onSurface,
                       letterSpacing: -1,
@@ -138,7 +138,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
                   // Subtitle
                   Text(
-                    'High-fidelity adaptive audio experience.',
+                    'Experiencia de audio de alta fidelidad.',
                     style: AppTypography.bodySm.copyWith(
                       color: AppColors.outlineVariant,
                     ),
@@ -178,7 +178,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      'LOADING STUDIO',
+                      'CARGANDO ESTUDIO',
                       style: AppTypography.labelCaps.copyWith(
                         letterSpacing: 2.0,
                         color: AppColors.onSurfaceVariant,

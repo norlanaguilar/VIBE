@@ -128,6 +128,37 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
+  Future<void> addMultipleSongsToPlaylist(String playlistName, List<String> songIds) async {
+    if (_userPlaylists.containsKey(playlistName)) {
+      final list = _userPlaylists[playlistName]!;
+      for (final id in songIds) {
+        if (!list.contains(id)) {
+          list.add(id);
+        }
+      }
+      await _savePlaylistsCache();
+      notifyListeners();
+    }
+  }
+
+  Future<void> addMultipleSongsToLiked(List<String> songIds) async {
+    final idSet = songIds.toSet();
+    bool changed = false;
+    for (int i = 0; i < _librarySongs.length; i++) {
+      if (idSet.contains(_librarySongs[i].id) && !_librarySongs[i].isLiked) {
+        _librarySongs[i] = _librarySongs[i].copyWith(isLiked: true);
+        if (_currentSong?.id == _librarySongs[i].id) {
+          _currentSong = _librarySongs[i];
+        }
+        changed = true;
+      }
+    }
+    if (changed) {
+      await _saveMetadataCache();
+      notifyListeners();
+    }
+  }
+
   Future<void> removeSongFromPlaylist(String playlistName, Song song) async {
     if (_userPlaylists.containsKey(playlistName)) {
       _userPlaylists[playlistName]!.remove(song.id);
@@ -183,7 +214,9 @@ class AudioPlayerService extends ChangeNotifier {
     'Bajos Potentes': [0.90, 0.80, 0.55, 0.50, 0.45],
     'Pop / Vocal': [0.45, 0.60, 0.85, 0.70, 0.55],
     'Rock / Electrónica': [0.85, 0.65, 0.45, 0.75, 0.90],
+    'Urbano / Reggaetón': [0.88, 0.75, 0.50, 0.65, 0.78],
     'Acústico': [0.55, 0.55, 0.65, 0.60, 0.50],
+    'Clásica': [0.65, 0.58, 0.48, 0.62, 0.72],
   };
 
   List<String> get availablePresets => _presets.keys.toList();

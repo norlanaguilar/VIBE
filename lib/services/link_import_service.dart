@@ -104,16 +104,25 @@ class PlaylistPreview {
       tracks.fold(Duration.zero, (prev, t) => prev + t.duration);
 }
 
-/// Resultado unificado de resolución de un enlace (canción o playlist/álbum)
+/// Resultado unificado de resolución de un enlace o búsqueda de canciones
 class ImportResult {
   final ImportPreview? singleTrack;
   final PlaylistPreview? playlist;
+  final List<ImportPreview>? searchResults;
 
-  const ImportResult.track(ImportPreview this.singleTrack) : playlist = null;
-  const ImportResult.playlist(PlaylistPreview this.playlist) : singleTrack = null;
+  const ImportResult.track(ImportPreview this.singleTrack)
+      : playlist = null,
+        searchResults = null;
+  const ImportResult.playlist(PlaylistPreview this.playlist)
+      : singleTrack = null,
+        searchResults = null;
+  const ImportResult.searchResults(List<ImportPreview> this.searchResults)
+      : singleTrack = null,
+        playlist = null;
 
   bool get isPlaylist => playlist != null;
   bool get isSingleTrack => singleTrack != null;
+  bool get isSearchResults => searchResults != null;
 }
 
 /// Convierte un enlace de YouTube o Spotify (canción individual o playlist/álbum)
@@ -186,32 +195,48 @@ class LinkImportService {
       }
     }
 
-    // YouTube video individual
-    final ytId = VideoId.parseVideoId(candidate);
-    if (ytId != null) {
-      return ParsedLink(
-        LinkPlatform.youtube,
-        ytId,
-        'https://www.youtube.com/watch?v=$ytId',
-        type: LinkType.track,
-      );
+    // YouTube video individual (únicamente si es una URL de YouTube)
+    if (candidate.contains('youtube.com') || candidate.contains('youtu.be')) {
+      final ytId = VideoId.parseVideoId(candidate);
+      if (ytId != null) {
+        return ParsedLink(
+          LinkPlatform.youtube,
+          ytId,
+          'https://www.youtube.com/watch?v=$ytId',
+          type: LinkType.track,
+        );
+      }
     }
 
     return null;
   }
 
-  /// Resuelve el enlace (canción o playlist) a una vista previa con metadatos completos
+  /// Resuelve el enlace (canción o playlist de YouTube/Spotify) o busca por nombre de canción en YouTube
   static Future<ImportResult> resolve(String input) async {
-    var parsed = parse(input);
+    final trimmed = input.trim();
+    if (trimmed.isEmpty) {
+      throw const FormatException('Escribe el nombre de una canción o pega un enlace.');
+    }
+
+    var parsed = parse(trimmed);
 
     // Enlaces cortos de compartir de Spotify (spotify.link/xxxx)
-    if (parsed == null && _spotifyShort.hasMatch(input)) {
-      final expanded = await _expandShortLink('https://${_spotifyShort.firstMatch(input)!.group(0)}');
+    if (parsed == null && _spotifyShort.hasMatch(trimmed)) {
+      final expanded = await _expandShortLink('https://${_spotifyShort.firstMatch(trimmed)!.group(0)}');
       if (expanded != null) parsed = parse(expanded);
     }
 
+    // Si no es una URL, buscar directamente opciones de la canción oficial en YouTube
     if (parsed == null) {
-      throw const FormatException('El enlace no es de YouTube ni de Spotify válido.');
+      final looksLikeUnsupportedUrl = RegExp(r'^https?://', caseSensitive: false).hasMatch(trimmed);
+      if (looksLikeUnsupportedUrl) {
+        throw const FormatException('El enlace no es válido. Usa un enlace de YouTube o Spotify.');
+      }
+      final results = await searchYouTubeSongs(trimmed);
+      if (results.isEmpty) {
+        throw Exception('No se encontraron canciones oficiales para "$trimmed".');
+      }
+      return ImportResult.searchResults(results);
     }
 
     if (parsed.isPlaylist) {
@@ -948,6 +973,313 @@ class LinkImportService {
       }
     }
     return null;
+  }
+
+  /// Busca en YouTube opciones de canciones por nombre, priorizando canciones oficiales
+  /// con carátula (Art Tracks / "- Topic" / Visualizer / Audio Oficial) y descartando
+  /// covers y videos musicales salvo que el usuario escriba explícitamente el canal del cover.
+  static Future<List<ImportPreview>> searchYouTubeSongs(String rawQuery) async {
+    final trimmed = rawQuery.trim();
+    if (trimmed.isEmpty) return [];
+
+    final wantQuery = _normalize(trimmed);
+    final userWantsCover = wantQuery.contains('cover') ||
+        wantQuery.contains('tributo') ||
+        wantQuery.contains('karaoke');
+    final userWantsLive = wantQuery.contains('en vivo') ||
+        wantQuery.contains('live') ||
+        wantQuery.contains('concierto');
+
+    final visitorData = await YouTubeStreamResolver.getVisitorData();
+
+    Future<List<Map<String, dynamic>>> runInnerTubeQuery(String q) async {
+      try {
+        final res = await http
+            .post(
+              Uri.parse('https://www.youtube.com/youtubei/v1/search?prettyPrint=false'),
+              headers: {
+                'Content-Type': 'application/json',
+                'User-Agent':
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                if (visitorData != null) 'X-Goog-Visitor-Id': visitorData,
+              },
+              body: json.encode({
+                'query': q,
+                'context': {
+                  'client': {
+                    'clientName': 'WEB',
+                    'clientVersion': '2.20250312.04.00',
+                    'hl': 'es',
+                    'gl': 'MX',
+                    if (visitorData != null) 'visitorData': visitorData,
+                  },
+                },
+              }),
+            )
+            .timeout(const Duration(seconds: 10));
+
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body);
+          final renderers = <Map<String, dynamic>>[];
+
+          void extract(dynamic node) {
+            if (node is Map<String, dynamic>) {
+              if (node.containsKey('videoRenderer') && node['videoRenderer'] is Map<String, dynamic>) {
+                renderers.add(node['videoRenderer'] as Map<String, dynamic>);
+              } else {
+                for (final v in node.values) {
+                  extract(v);
+                }
+              }
+            } else if (node is List) {
+              for (final item in node) {
+                extract(item);
+              }
+            }
+          }
+
+          extract(data);
+          return renderers;
+        }
+      } catch (e) {
+        print('searchYouTubeSongs InnerTube error ($q): $e');
+      }
+      return [];
+    }
+
+    Future<List<_TrackMeta>> fetchItunesCandidates() async {
+      try {
+        final res = await http
+            .get(Uri.parse('https://itunes.apple.com/search?term=${Uri.encodeComponent(trimmed)}&entity=song&limit=10'))
+            .timeout(const Duration(seconds: 6));
+        if (res.statusCode == 200) {
+          final results = (json.decode(res.body)['results'] as List?) ?? [];
+          return results.whereType<Map<String, dynamic>>().map((r) {
+            final ms = r['trackTimeMillis'] as int? ?? 0;
+            final release = r['releaseDate'] as String?;
+            return _TrackMeta(
+              title: (r['trackName'] as String?) ?? '',
+              artist: (r['artistName'] as String?) ?? '',
+              album: r['collectionName'] as String?,
+              coverUrl: (r['artworkUrl100'] as String?)?.replaceAll('100x100bb', '600x600bb'),
+              duration: Duration(milliseconds: ms),
+              genre: r['primaryGenreName'] as String?,
+              year: (release != null && release.length >= 4) ? release.substring(0, 4) : null,
+            );
+          }).toList();
+        }
+      } catch (_) {}
+      return [];
+    }
+
+    final queries = (userWantsCover || userWantsLive)
+        ? <String>[trimmed]
+        : <String>[
+            '$trimmed "Provided to YouTube"',
+            '$trimmed Visualizer OR "Official Audio" OR "Audio Oficial"',
+            trimmed,
+          ];
+
+    final searchFutures = queries.map(runInnerTubeQuery).toList();
+    final itunesFuture = fetchItunesCandidates();
+
+    final rawLists = await Future.wait(searchFutures);
+    final itunesTracks = await itunesFuture;
+
+    final coverWords = [
+      'cover',
+      'karaoke',
+      'tributo',
+      'tribute',
+      'parodia',
+      'imitador',
+      'reaccion',
+      'reaction',
+      'tutorial',
+      'como tocar',
+      'pista',
+      'instrumental',
+      '8d',
+      'nightcore',
+      'sped up',
+      'slowed',
+    ];
+
+    final liveWords = [
+      'en vivo',
+      'live',
+      'concierto',
+      'festival',
+      'auditorio',
+    ];
+
+    final musicVideoWords = [
+      'video oficial',
+      'official video',
+      'official music video',
+      'videoclip',
+      'video musical',
+    ];
+
+    final seenIds = <String>{};
+    final scored = <({ImportPreview preview, double score, bool isMusicVideo})>[];
+
+    for (final list in rawLists) {
+      for (final r in list) {
+        final videoId = r['videoId'] as String?;
+        if (videoId == null || videoId.isEmpty || seenIds.contains(videoId)) continue;
+
+        String vTitle = '';
+        final titleRuns = r['title']?['runs'] as List?;
+        if (titleRuns != null && titleRuns.isNotEmpty) {
+          vTitle = titleRuns.map((e) => e['text']?.toString() ?? '').join();
+        } else if (r['title']?['simpleText'] != null) {
+          vTitle = r['title']['simpleText'].toString();
+        }
+        if (vTitle.isEmpty) continue;
+
+        String vAuthor = '';
+        final ownerRuns =
+            (r['ownerText']?['runs'] ?? r['longBylineText']?['runs'] ?? r['shortBylineText']?['runs']) as List?;
+        if (ownerRuns != null && ownerRuns.isNotEmpty) {
+          vAuthor = ownerRuns.first['text']?.toString() ?? '';
+        }
+
+        String desc = '';
+        final snippets = r['detailedMetadataSnippets'] as List?;
+        if (snippets != null && snippets.isNotEmpty) {
+          final runs = snippets.first['snippetText']?['runs'] as List?;
+          if (runs != null) {
+            desc = runs.map((e) => e['text']?.toString() ?? '').join();
+          }
+        }
+        if (desc.isEmpty && r['descriptionSnippet']?['runs'] is List) {
+          desc = (r['descriptionSnippet']['runs'] as List).map((e) => e['text']?.toString() ?? '').join();
+        }
+
+        final lengthStr = (r['lengthText']?['simpleText'] as String?) ??
+            ((r['lengthText']?['runs'] as List?)?.isNotEmpty == true
+                ? r['lengthText']['runs'][0]['text']?.toString()
+                : null);
+        final vd = _parseClockDuration(lengthStr);
+        if (vd.inSeconds > 0 && (vd.inSeconds < 45 || vd.inSeconds > 900)) continue;
+
+        final normTitle = _normalize(vTitle);
+        final cleanAuthor = vAuthor
+            .replaceAll(RegExp(r'\s*-\s*Topic$', caseSensitive: false), '')
+            .replaceAll(RegExp(r'VEVO$', caseSensitive: false), '')
+            .trim();
+        final normAuthor = _normalize(cleanAuthor);
+
+        // Permitir un canal de cover únicamente si el usuario escribió el nombre de ese canal en la búsqueda
+        final userTypedChannel = normAuthor.length >= 4 &&
+            wantQuery.contains(normAuthor) &&
+            !itunesTracks.any((it) => _normalize(it.artist) == normAuthor);
+
+        final hasCoverWord = coverWords.any((w) => normTitle.contains(w) || normAuthor.contains(w));
+        if (hasCoverWord && !userWantsCover && !userTypedChannel) {
+          continue;
+        }
+
+        final hasLiveWord = liveWords.any((w) => normTitle.contains(w));
+        if (hasLiveWord && !userWantsLive && !userTypedChannel) {
+          continue;
+        }
+
+        final isArtTrack = vAuthor.endsWith(' - Topic') ||
+            desc.contains('Provided to YouTube') ||
+            desc.contains('Auto-generated by YouTube');
+        final isVisualizerOrAudio = normTitle.contains('visualizer') ||
+            normTitle.contains('official audio') ||
+            normTitle.contains('audio oficial') ||
+            normTitle.contains('lyric') ||
+            normTitle.contains('letra');
+        final isMusicVideo = !isArtTrack &&
+            !isVisualizerOrAudio &&
+            musicVideoWords.any((w) => normTitle.contains(w));
+
+        var score = 0.0;
+        if (isArtTrack) score += 85; // Canción oficial + carátula cuadrada ("- Topic")
+        if (isVisualizerOrAudio) score += 45; // Visualizer / Audio Oficial
+        if (userTypedChannel) score += 70; // Canal específico pedido por el usuario
+        if (isMusicVideo) score -= 65; // Descartar/penalizar video oficial teatral
+
+        for (final w in wantQuery.split(' ')) {
+          if (w.length > 2 && (normTitle.contains(w) || normAuthor.contains(w))) {
+            score += 10;
+          }
+        }
+
+        final guess = _splitArtistTitle(vTitle, cleanAuthor);
+
+        // Vincular con metadatos de estudio de iTunes para carátula cuadrada HD y nombre de álbum oficial
+        _TrackMeta? matchedItunes;
+        for (final it in itunesTracks) {
+          final itTitle = _normalize(it.title);
+          final itArtist = _normalize(it.artist);
+          final guessTitle = _normalize(guess.title);
+          final guessArtist = _normalize(guess.artist);
+
+          final titleMatches = itTitle.isNotEmpty &&
+              (guessTitle.contains(itTitle) || itTitle.contains(guessTitle) || normTitle.contains(itTitle));
+          final artistMatches = itArtist.isNotEmpty &&
+              (guessArtist.contains(itArtist) || itArtist.contains(guessArtist) || normAuthor.contains(itArtist));
+          if (titleMatches && artistMatches) {
+            matchedItunes = it;
+            score += 30;
+            break;
+          }
+        }
+
+        // Si no es un canal pedido por el usuario, ni Art Track, ni Visualizer/Audio, ni artista oficial de iTunes,
+        // descartar canales desconocidos para no mostrar covers sin etiqueta
+        if (!userWantsCover &&
+            !userTypedChannel &&
+            !isArtTrack &&
+            !isVisualizerOrAudio &&
+            matchedItunes == null) {
+          continue;
+        }
+
+        seenIds.add(videoId);
+
+        final displayTitle = (isArtTrack && matchedItunes != null) ? matchedItunes.title : guess.title;
+        final displayArtist = (matchedItunes != null && !userTypedChannel) ? matchedItunes.artist : guess.artist;
+        final displayAlbum = isArtTrack
+            ? (matchedItunes?.album ?? 'Canción Oficial • Carátula')
+            : (isVisualizerOrAudio
+                ? (matchedItunes?.album != null ? '${matchedItunes!.album} • Visualizer' : 'Visualizer / Audio Oficial')
+                : (matchedItunes?.album ?? cleanAuthor));
+        final coverUrl = (matchedItunes?.coverUrl != null && !userTypedChannel)
+            ? matchedItunes!.coverUrl
+            : 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
+
+        scored.add((
+          preview: ImportPreview(
+            title: displayTitle,
+            artist: displayArtist,
+            album: displayAlbum,
+            coverUrl: coverUrl,
+            duration: vd > Duration.zero ? vd : (matchedItunes?.duration ?? Duration.zero),
+            youtubeId: videoId,
+            sourceUrl: 'https://www.youtube.com/watch?v=$videoId',
+            platform: LinkPlatform.youtube,
+            genre: matchedItunes?.genre,
+            year: matchedItunes?.year,
+          ),
+          score: score,
+          isMusicVideo: isMusicVideo,
+        ));
+      }
+    }
+
+    scored.sort((a, b) => b.score.compareTo(a.score));
+
+    // Si hay opciones de Audio Oficial / Carátula / Visualizer, excluir por completo los videos musicales oficiales
+    final nonMusicVideos = scored.where((item) => !item.isMusicVideo).toList();
+    final finalPool = nonMusicVideos.isNotEmpty ? nonMusicVideos : scored;
+
+    return finalPool.take(6).map((e) => e.preview).toList();
   }
 
   // ---------------------------------------------------------------------------

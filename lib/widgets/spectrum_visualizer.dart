@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/audio_player_service.dart';
-import '../theme/app_colors.dart';
 
 class SpectrumVisualizer extends StatefulWidget {
   final bool isPlaying;
@@ -163,23 +162,23 @@ class _SpectrumPainter extends CustomPainter {
       final Rect rect = Rect.fromLTWH(x, y, barWidth, barH);
       final RRect rrect = RRect.fromRectAndRadius(rect, const Radius.circular(3));
 
-      // Gradiente neón dinámico (Violeta Eléctrico -> Cyan / Aguamarina)
-      final Color baseColor = (i % 2 == 0) ? AppColors.primary : AppColors.secondary;
+      // Barras del espectro en color blanco puro con brillo sutil
+      const Color baseColor = Colors.white;
       final Paint paint = Paint()
         ..shader = LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
           colors: [
-            baseColor.withOpacity(0.55),
+            baseColor.withOpacity(0.65),
             baseColor,
           ],
         ).createShader(rect);
 
-      // Sombra de brillo neón sutil cuando hay volumen activo
+      // Sombra de brillo blanco sutil cuando hay volumen activo
       if (isPlaying && heights[i] > 0.15) {
         final Paint glowPaint = Paint()
-          ..color = baseColor.withOpacity((heights[i] * 0.4).clamp(0.1, 0.45))
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+          ..color = baseColor.withOpacity((heights[i] * 0.35).clamp(0.08, 0.40))
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
         canvas.drawRRect(rrect, glowPaint);
       }
 

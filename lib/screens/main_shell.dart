@@ -54,14 +54,14 @@ class _MainShellState extends State<MainShell> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'VibeLocal User',
+                            'Vibe App',
                             style: AppTypography.headlineSm.copyWith(
                               fontSize: 14,
                               color: AppColors.primaryContainer,
                             ),
                           ),
                           Text(
-                            'Premium Member',
+                            'Audio de Alta Fidelidad',
                             style: AppTypography.bodySm.copyWith(fontSize: 11),
                           ),
                         ],
@@ -71,14 +71,14 @@ class _MainShellState extends State<MainShell> {
                   const SizedBox(height: 32),
 
                   // Navigation Links
-                  _buildDesktopNavItem(0, Icons.folder_open, 'Local Files'),
-                  _buildDesktopNavItem(1, Icons.explore, 'Descubrir'),
-                  _buildDesktopNavItem(2, Icons.favorite, 'Me gusta'),
+                  _buildDesktopNavItem(0, Icons.library_music, 'Biblioteca'),
+                  _buildDesktopNavItem(1, Icons.explore, 'Explorar'),
+                  _buildDesktopNavItem(2, Icons.queue_music, 'Playlists'),
                   _buildDesktopNavItem(3, Icons.settings, 'Ajustes'),
 
                   const Spacer(),
                   Text(
-                    '1.2GB Cache',
+                    'Vibe App',
                     style: AppTypography.monoLabel.copyWith(color: AppColors.outlineVariant),
                   ),
                 ],
@@ -143,12 +143,12 @@ class _MainShellState extends State<MainShell> {
           NavigationDestination(
             icon: Icon(Icons.explore_outlined, color: AppColors.onSurfaceVariant),
             selectedIcon: Icon(Icons.explore, color: AppColors.onSecondaryContainer),
-            label: 'Descubrir',
+            label: 'Explorar',
           ),
           NavigationDestination(
-            icon: Icon(Icons.favorite_outline, color: AppColors.onSurfaceVariant),
-            selectedIcon: Icon(Icons.favorite, color: AppColors.onSecondaryContainer),
-            label: 'Me gusta',
+            icon: Icon(Icons.queue_music_outlined, color: AppColors.onSurfaceVariant),
+            selectedIcon: Icon(Icons.queue_music, color: AppColors.onSecondaryContainer),
+            label: 'Playlists',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined, color: AppColors.onSurfaceVariant),

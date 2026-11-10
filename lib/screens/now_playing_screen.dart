@@ -117,7 +117,7 @@ class NowPlayingScreen extends StatelessWidget {
     if (song == null) {
       return const Scaffold(
         backgroundColor: AppColors.background,
-        body: Center(child: Text('No song selected')),
+        body: Center(child: Text('Ninguna canción seleccionada')),
       );
     }
 
@@ -157,7 +157,7 @@ class NowPlayingScreen extends StatelessWidget {
                         onPressed: () => Navigator.of(context).pop(),
                       ),
                       Text(
-                        'Now Playing',
+                        'Reproduciendo Ahora',
                         style: AppTypography.headlineSm.copyWith(
                           color: AppColors.primary,
                           fontSize: 18,

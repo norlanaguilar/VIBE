@@ -16,8 +16,8 @@ class LibraryScreen extends StatefulWidget {
 }
 
 class _LibraryScreenState extends State<LibraryScreen> {
-  String _selectedCategory = 'All Files';
-  final List<String> _categories = ['All Files', 'Playlists', 'Artists', 'Albums'];
+  String _selectedCategory = 'Canciones';
+  final List<String> _categories = ['Canciones', 'Artistas'];
   String _searchQuery = '';
   bool _isSearching = false;
 
@@ -105,221 +105,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  void _showPlaylistDetailSheet(
-      BuildContext context, AudioPlayerService audioService, String playlistName, List<Song> playlistSongs) {
-    final isCustom = audioService.userPlaylists.containsKey(playlistName);
-    final cleanName = playlistName;
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            final currentSongs = isCustom
-                ? (audioService.playlists[playlistName] ?? [])
-                : playlistSongs;
-
-            return Container(
-              height: MediaQuery.of(context).size.height * 0.75,
-              decoration: const BoxDecoration(
-                color: AppColors.surfaceContainerLow,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-              ),
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.outlineVariant,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              playlistName,
-                              style: AppTypography.headlineSm.copyWith(color: Colors.white, fontSize: 20),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            Text(
-                              '${currentSongs.length} canciones',
-                              style: AppTypography.bodySm.copyWith(color: AppColors.secondary),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: AppColors.onSurfaceVariant),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primaryContainer,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('REPRODUCIR PLAYLIST', style: TextStyle(fontWeight: FontWeight.bold)),
-                          onPressed: currentSongs.isEmpty
-                              ? null
-                              : () {
-                                  Navigator.pop(context);
-                                  audioService.playPlaylist(currentSongs, currentSongs.first);
-                                },
-                        ),
-                      ),
-                      if (isCustom) ...[
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                          tooltip: 'Eliminar Playlist',
-                          onPressed: () async {
-                            final action = await showDialog<String>(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                backgroundColor: AppColors.surfaceContainerHigh,
-                                title: Text('Eliminar "$cleanName"', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                content: Text(
-                                  '¿Qué deseas hacer con la playlist "$cleanName" (${currentSongs.length} canciones)?',
-                                  style: const TextStyle(color: AppColors.onSurfaceVariant),
-                                ),
-                                actions: [
-                                  TextButton(onPressed: () => Navigator.pop(ctx, 'cancel'), child: const Text('Cancelar')),
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(ctx, 'only_playlist'),
-                                    child: const Text('Solo Playlist', style: TextStyle(color: AppColors.secondary)),
-                                  ),
-                                  ElevatedButton(
-                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                                    onPressed: () => Navigator.pop(ctx, 'all'),
-                                    child: const Text('Playlist y Canciones', style: TextStyle(color: Colors.white)),
-                                  ),
-                                ],
-                              ),
-                            );
-
-                            if (action == 'all') {
-                              await audioService.deletePlaylistWithSongs(cleanName, deleteSongsFromLibrary: true);
-                              if (context.mounted) {
-                                Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Playlist "$cleanName" y sus canciones eliminadas')),
-                                );
-                              }
-                            } else if (action == 'only_playlist') {
-                              await audioService.deletePlaylistWithSongs(cleanName, deleteSongsFromLibrary: false);
-                              if (context.mounted) {
-                                Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Playlist "$cleanName" eliminada')),
-                                );
-                              }
-                            }
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(color: AppColors.outlineVariant),
-                  const SizedBox(height: 12),
-
-                  Expanded(
-                    child: currentSongs.isEmpty
-                        ? Center(
-                            child: Text(
-                              'Esta playlist no tiene canciones aún.\n¡Usa el botón "Agregar a Playlist" en cualquier canción!',
-                              style: AppTypography.bodyLg.copyWith(color: AppColors.onSurfaceVariant),
-                              textAlign: TextAlign.center,
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: currentSongs.length,
-                            itemBuilder: (context, index) {
-                              final song = currentSongs[index];
-                              final isCurrent = audioService.currentSong?.id == song.id;
-
-                              return Container(
-                                margin: const EdgeInsets.symmetric(vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: isCurrent
-                                      ? AppColors.primaryContainer.withOpacity(0.25)
-                                      : AppColors.surfaceContainerHigh.withOpacity(0.4),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: ListTile(
-                                  leading: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: SizedBox(
-                                      width: 44,
-                                      height: 44,
-                                      child: _buildCoverImage(song),
-                                    ),
-                                  ),
-                                  title: Text(
-                                    song.title,
-                                    style: TextStyle(
-                                      color: isCurrent ? AppColors.primary : Colors.white,
-                                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  subtitle: Text(
-                                    song.artist,
-                                    style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  trailing: isCustom
-                                      ? IconButton(
-                                          icon: const Icon(Icons.remove_circle_outline, color: Colors.redAccent),
-                                          tooltip: 'Eliminar de la playlist',
-                                          onPressed: () async {
-                                            await audioService.removeSongFromPlaylist(cleanName, song);
-                                            setSheetState(() {});
-                                          },
-                                        )
-                                      : null,
-                                  onTap: () {
-                                    audioService.playPlaylist(currentSongs, song);
-                                  },
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final audioService = Provider.of<AudioPlayerService>(context);
@@ -344,7 +129,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Library',
+                      'Biblioteca',
                       style: AppTypography.headlineMd.copyWith(
                         color: AppColors.primary,
                         fontSize: 26,
@@ -401,7 +186,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     autofocus: true,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      hintText: 'Search songs or artists...',
+                      hintText: 'Buscar canciones o artistas...',
                       hintStyle: TextStyle(color: AppColors.outlineVariant),
                       filled: true,
                       fillColor: AppColors.surfaceContainerHigh,
@@ -462,8 +247,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
             ),
 
-            // Bento Grid for Recently Added Tracks (Visible in All Files)
-            if (_selectedCategory == 'All Files' && recentlyAdded.isNotEmpty)
+            // Bento Grid for Recently Added Tracks (Visible in Canciones)
+            if (_selectedCategory == 'Canciones' && recentlyAdded.isNotEmpty)
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.all(20.0),
@@ -471,7 +256,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Recently Added',
+                        'Agregadas Recientemente',
                         style: AppTypography.headlineSm.copyWith(
                           fontSize: 18,
                           color: AppColors.onSurface,
@@ -614,8 +399,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
                 child: Text(
-                  _selectedCategory == 'All Files'
-                      ? 'All Local Tracks'
+                  _selectedCategory == 'Canciones'
+                      ? 'Todas las Canciones'
                       : _selectedCategory,
                   style: AppTypography.headlineSm.copyWith(
                     color: AppColors.onSurface,
@@ -638,69 +423,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// Visualizador Dinámico según Categoría Seleccionada
   List<Widget> _buildCategoryView(AudioPlayerService audioService, List<Song> songs) {
-    if (_selectedCategory == 'Playlists') {
-      final playlists = audioService.playlists;
-      return [
-        SliverList(
-          delegate: SliverChildBuilderDelegate(
-            (context, index) {
-              final playlistName = playlists.keys.elementAt(index);
-              final playlistSongs = playlists[playlistName] ?? [];
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-                child: GlassContainer(
-                  borderRadius: BorderRadius.circular(16),
-                  padding: const EdgeInsets.all(16),
-                  onTap: () {
-                    _showPlaylistDetailSheet(context, audioService, playlistName, playlistSongs);
-                  },
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryContainer.withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.playlist_play, color: AppColors.primary, size: 28),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              playlistName,
-                              style: AppTypography.headlineSm.copyWith(fontSize: 16, color: Colors.white),
-                            ),
-                            Text(
-                              '${playlistSongs.length} canciones',
-                              style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.play_circle_fill, color: AppColors.primary, size: 36),
-                        onPressed: () {
-                          if (playlistSongs.isNotEmpty) {
-                            audioService.playPlaylist(playlistSongs, playlistSongs.first);
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-            childCount: playlists.length,
-          ),
-        ),
-      ];
-    }
-
-    if (_selectedCategory == 'Artists') {
+    if (_selectedCategory == 'Artistas') {
       final artistsMap = audioService.songsByArtist;
       if (artistsMap.isEmpty) {
         return [_buildEmptySliver('No hay artistas encontrados.')];
@@ -738,7 +461,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               style: AppTypography.headlineSm.copyWith(fontSize: 16, color: Colors.white),
                             ),
                             Text(
-                              '${artistSongs.length} canciones grabadas',
+                              '${artistSongs.length} canciones',
                               style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
                             ),
                           ],
@@ -756,69 +479,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ];
     }
 
-    if (_selectedCategory == 'Albums') {
-      final albumsMap = audioService.songsByAlbum;
-      if (albumsMap.isEmpty) {
-        return [_buildEmptySliver('No hay álbumes registrados.')];
-      }
-      return [
-        SliverList(
-          delegate: SliverChildBuilderDelegate(
-            (context, index) {
-              final albumName = albumsMap.keys.elementAt(index);
-              final albumSongs = albumsMap[albumName] ?? [];
-              final firstSong = albumSongs.first;
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-                child: GlassContainer(
-                  borderRadius: BorderRadius.circular(16),
-                  padding: const EdgeInsets.all(12),
-                  onTap: () {
-                    if (albumSongs.isNotEmpty) {
-                      audioService.playPlaylist(albumSongs, albumSongs.first);
-                    }
-                  },
-                  child: Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: SizedBox(
-                          width: 56,
-                          height: 56,
-                          child: _buildCoverImage(firstSong),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              albumName,
-                              style: AppTypography.headlineSm.copyWith(fontSize: 15, color: Colors.white),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            Text(
-                              '${firstSong.artist} • ${albumSongs.length} pistas',
-                              style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Icon(Icons.play_circle_fill, color: AppColors.tertiary, size: 32),
-                    ],
-                  ),
-                ),
-              );
-            },
-            childCount: albumsMap.length,
-          ),
-        ),
-      ];
-    }
-
-    // Default 'All Files' View
+    // Vista por defecto: 'Canciones'
     if (songs.isEmpty) {
       return [
         SliverFillRemaining(
@@ -838,7 +499,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Guarda o copia tus archivos de música (.mp3, .m4a, .wav) en la carpeta VibeLocal de la app Archivos en iOS o almacenamiento local.',
+                    'Guarda o copia tus archivos de música (.mp3, .m4a, .wav) en la carpeta de Vibe App o agrégala desde Explorar.',
                     style: AppTypography.bodySm.copyWith(color: AppColors.onSurfaceVariant),
                     textAlign: TextAlign.center,
                   ),
@@ -997,7 +658,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               children: [
                                 Icon(Icons.download, color: AppColors.primary),
                                 SizedBox(width: 8),
-                                Text('Descargar para escuchar offline'),
+                                Text('Descargar para escuchar sin conexión'),
                               ],
                             ),
                           ),
@@ -1044,17 +705,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             ],
                           ),
                         ),
-                        if (song.isStreaming)
-                          const PopupMenuItem(
-                            value: 'remove_stream',
-                            child: Row(
-                              children: [
-                                Icon(Icons.delete_outline, color: Colors.redAccent),
-                                SizedBox(width: 8),
-                                Text('Quitar de biblioteca', style: TextStyle(color: Colors.redAccent)),
-                              ],
-                            ),
+                        const PopupMenuItem(
+                          value: 'remove_stream',
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete_outline, color: Colors.redAccent),
+                              SizedBox(width: 8),
+                              Text('Quitar de biblioteca', style: TextStyle(color: Colors.redAccent)),
+                            ],
                           ),
+                        ),
                       ],
                     ),
                   ],
