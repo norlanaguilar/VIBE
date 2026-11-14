@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import AVFoundation
+import MediaToolbox
 import Accelerate
 import Photos
 import PhotosUI
@@ -16,6 +17,7 @@ import PhotosUI
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     configurePlaybackAudioSession()
+    VibeEqualizerEngine.shared.startObserving()
 
     NotificationCenter.default.addObserver(
       self,
@@ -128,6 +130,22 @@ import PhotosUI
           return
         }
         self.resolveGalleryVideo(ref: ref, result: result)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    // Canal para Ecualizador Paramétrico Real de 5 Bandas (60Hz, 230Hz, 910Hz, 4kHz, 14kHz)
+    let equalizerChannel = FlutterMethodChannel(name: "vibe/equalizer", binaryMessenger: messenger)
+    equalizerChannel.setMethodCallHandler { (call: FlutterMethodCall, result: @escaping FlutterResult) in
+      if call.method == "setGains" {
+        if let args = call.arguments as? [String: Any],
+           let gains = args["gains"] as? [Double] {
+          VibeEqualizerEngine.shared.updateGains(gains)
+          result(true)
+        } else {
+          result(false)
+        }
       } else {
         result(FlutterMethodNotImplemented)
       }
@@ -497,3 +515,394 @@ import PhotosUI
     return FlutterStandardTypedData(bytes: outputData)
   }
 }
+
+// MARK: - Procesador DSP de Ecualizador de 5 Bandas en Tiempo Real (MTAudioProcessingTap)
+
+private struct BiquadCoeffs {
+  var b0: Float = 1.0
+  var b1: Float = 0.0
+  var b2: Float = 0.0
+  var a1: Float = 0.0
+  var a2: Float = 0.0
+}
+
+private struct BiquadState {
+  var x1: Float = 0.0
+  var x2: Float = 0.0
+  var y1: Float = 0.0
+  var y2: Float = 0.0
+
+  @inline(__always)
+  mutating func process(_ x: Float, _ c: BiquadCoeffs) -> Float {
+    let y = c.b0 * x + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2
+    x2 = x1
+    x1 = x
+    y2 = y1
+    y1 = y
+    return y
+  }
+}
+
+private final class VibeTapContext {
+  var sampleRate: Double = 44100.0
+  var channels: Int = 2
+  var isNonInterleaved: Bool = true
+  var isFloat: Bool = true
+  var cachedVersion: Int = -1
+  var coeffs: [BiquadCoeffs] = Array(repeating: BiquadCoeffs(), count: 5)
+  var preampGain: Float = 1.0
+  var isBypassed: Bool = true
+  // Estado por canal (hasta 2 canales estéreo) y 5 bandas
+  var states: [[BiquadState]] = Array(
+    repeating: Array(repeating: BiquadState(), count: 5),
+    count: 2
+  )
+
+  func prepare(format: AudioStreamBasicDescription) {
+    if format.mSampleRate > 8000 {
+      sampleRate = format.mSampleRate
+    }
+    channels = max(1, min(2, Int(format.mChannelsPerFrame)))
+    isFloat = (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+    isNonInterleaved = (format.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+    cachedVersion = -1
+    states = Array(repeating: Array(repeating: BiquadState(), count: 5), count: 2)
+  }
+
+  func syncCoefficientsIfNeeded() {
+    let engine = VibeEqualizerEngine.shared
+    let (version, gains) = engine.snapshotGains()
+    guard version != cachedVersion else { return }
+    cachedVersion = version
+
+    // Verificar si todas las bandas están en 0.0 dB (0.5 normalizado)
+    let allFlat = gains.allSatisfy { abs($0 - 0.5) < 0.008 }
+    isBypassed = allFlat
+    if allFlat {
+      preampGain = 1.0
+      return
+    }
+
+    // Rango de -15 dB a +15 dB para que el cambio sea claramente perceptible y contundente
+    let freqs: [Double] = [60.0, 230.0, 910.0, 4000.0, 14000.0]
+    var maxBoostDb: Double = 0.0
+
+    for i in 0..<5 {
+      let norm = max(0.0, min(1.0, gains[i]))
+      let db = (norm - 0.5) * 30.0 // -15.0 dB .. +15.0 dB
+      if db > maxBoostDb { maxBoostDb = db }
+
+      if i == 0 {
+        coeffs[i] = Self.makeLowShelf(freq: freqs[i], sampleRate: sampleRate, dbGain: db)
+      } else if i == 4 {
+        coeffs[i] = Self.makeHighShelf(freq: freqs[i], sampleRate: sampleRate, dbGain: db)
+      } else {
+        coeffs[i] = Self.makePeaking(freq: freqs[i], sampleRate: sampleRate, dbGain: db, q: 0.90)
+      }
+    }
+
+    // Compensación parcial de ganancia para evitar saturación dura manteniendo pegada
+    let headroomDb = -max(0.0, maxBoostDb * 0.28)
+    preampGain = Float(pow(10.0, headroomDb / 20.0))
+  }
+
+  func process(bufferListInOut: UnsafeMutablePointer<AudioBufferList>, frameCount: Int) {
+    guard frameCount > 0 else { return }
+    syncCoefficientsIfNeeded()
+    guard !isBypassed, isFloat else { return }
+
+    let abl = UnsafeMutableAudioBufferListPointer(bufferListInOut)
+    let c0 = coeffs[0]
+    let c1 = coeffs[1]
+    let c2 = coeffs[2]
+    let c3 = coeffs[3]
+    let c4 = coeffs[4]
+    let pre = preampGain
+
+    if isNonInterleaved || abl.count > 1 {
+      let bufCount = min(abl.count, 2)
+      for ch in 0..<bufCount {
+        guard let data = abl[ch].mData else { continue }
+        let ptr = data.assumingMemoryBound(to: Float.self)
+        var s0 = states[ch][0]
+        var s1 = states[ch][1]
+        var s2 = states[ch][2]
+        var s3 = states[ch][3]
+        var s4 = states[ch][4]
+
+        for i in 0..<frameCount {
+          var sample = ptr[i] * pre
+          sample = s0.process(sample, c0)
+          sample = s1.process(sample, c1)
+          sample = s2.process(sample, c2)
+          sample = s3.process(sample, c3)
+          sample = s4.process(sample, c4)
+          // Limitador suave de estudio para graves profundos sin distorsión digital
+          if sample > 0.92 {
+            sample = 0.92 + 0.08 * tanh((sample - 0.92) * 8.0)
+          } else if sample < -0.92 {
+            sample = -0.92 + 0.08 * tanh((sample + 0.92) * 8.0)
+          }
+          ptr[i] = sample
+        }
+
+        states[ch][0] = s0
+        states[ch][1] = s1
+        states[ch][2] = s2
+        states[ch][3] = s3
+        states[ch][4] = s4
+      }
+    } else if let firstBuf = abl.first, let data = firstBuf.mData {
+      let chCount = max(1, min(2, Int(firstBuf.mNumberChannels)))
+      let ptr = data.assumingMemoryBound(to: Float.self)
+      for ch in 0..<chCount {
+        var s0 = states[ch][0]
+        var s1 = states[ch][1]
+        var s2 = states[ch][2]
+        var s3 = states[ch][3]
+        var s4 = states[ch][4]
+
+        for i in 0..<frameCount {
+          let idx = i * chCount + ch
+          var sample = ptr[idx] * pre
+          sample = s0.process(sample, c0)
+          sample = s1.process(sample, c1)
+          sample = s2.process(sample, c2)
+          sample = s3.process(sample, c3)
+          sample = s4.process(sample, c4)
+          if sample > 0.92 {
+            sample = 0.92 + 0.08 * tanh((sample - 0.92) * 8.0)
+          } else if sample < -0.92 {
+            sample = -0.92 + 0.08 * tanh((sample + 0.92) * 8.0)
+          }
+          ptr[idx] = sample
+        }
+
+        states[ch][0] = s0
+        states[ch][1] = s1
+        states[ch][2] = s2
+        states[ch][3] = s3
+        states[ch][4] = s4
+      }
+    }
+  }
+
+  private static func makePeaking(freq: Double, sampleRate: Double, dbGain: Double, q: Double) -> BiquadCoeffs {
+    if abs(dbGain) < 0.05 { return BiquadCoeffs() }
+    let A = pow(10.0, dbGain / 40.0)
+    let w0 = 2.0 * Double.pi * min(freq, sampleRate * 0.45) / sampleRate
+    let cosw0 = cos(w0)
+    let sinw0 = sin(w0)
+    let alpha = sinw0 / (2.0 * q)
+
+    let b0 = 1.0 + alpha * A
+    let b1 = -2.0 * cosw0
+    let b2 = 1.0 - alpha * A
+    let a0 = 1.0 + alpha / A
+    let a1 = -2.0 * cosw0
+    let a2 = 1.0 - alpha / A
+
+    return BiquadCoeffs(
+      b0: Float(b0 / a0),
+      b1: Float(b1 / a0),
+      b2: Float(b2 / a0),
+      a1: Float(a1 / a0),
+      a2: Float(a2 / a0)
+    )
+  }
+
+  private static func makeLowShelf(freq: Double, sampleRate: Double, dbGain: Double) -> BiquadCoeffs {
+    if abs(dbGain) < 0.05 { return BiquadCoeffs() }
+    let A = pow(10.0, dbGain / 40.0)
+    let w0 = 2.0 * Double.pi * min(freq, sampleRate * 0.45) / sampleRate
+    let cosw0 = cos(w0)
+    let sinw0 = sin(w0)
+    let alpha = sinw0 / 2.0 * sqrt(2.0)
+    let twoSqrtAAlpha = 2.0 * sqrt(A) * alpha
+
+    let b0 = A * ((A + 1.0) - (A - 1.0) * cosw0 + twoSqrtAAlpha)
+    let b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosw0)
+    let b2 = A * ((A + 1.0) - (A - 1.0) * cosw0 - twoSqrtAAlpha)
+    let a0 = (A + 1.0) + (A - 1.0) * cosw0 + twoSqrtAAlpha
+    let a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosw0)
+    let a2 = (A + 1.0) + (A - 1.0) * cosw0 - twoSqrtAAlpha
+
+    return BiquadCoeffs(
+      b0: Float(b0 / a0),
+      b1: Float(b1 / a0),
+      b2: Float(b2 / a0),
+      a1: Float(a1 / a0),
+      a2: Float(a2 / a0)
+    )
+  }
+
+  private static func makeHighShelf(freq: Double, sampleRate: Double, dbGain: Double) -> BiquadCoeffs {
+    if abs(dbGain) < 0.05 { return BiquadCoeffs() }
+    let A = pow(10.0, dbGain / 40.0)
+    let w0 = 2.0 * Double.pi * min(freq, sampleRate * 0.45) / sampleRate
+    let cosw0 = cos(w0)
+    let sinw0 = sin(w0)
+    let alpha = sinw0 / 2.0 * sqrt(2.0)
+    let twoSqrtAAlpha = 2.0 * sqrt(A) * alpha
+
+    let b0 = A * ((A + 1.0) + (A - 1.0) * cosw0 + twoSqrtAAlpha)
+    let b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosw0)
+    let b2 = A * ((A + 1.0) + (A - 1.0) * cosw0 - twoSqrtAAlpha)
+    let a0 = (A + 1.0) - (A - 1.0) * cosw0 + twoSqrtAAlpha
+    let a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cosw0)
+    let a2 = (A + 1.0) - (A - 1.0) * cosw0 - twoSqrtAAlpha
+
+    return BiquadCoeffs(
+      b0: Float(b0 / a0),
+      b1: Float(b1 / a0),
+      b2: Float(b2 / a0),
+      a1: Float(a1 / a0),
+      a2: Float(a2 / a0)
+    )
+  }
+}
+
+private let eqTapInit: MTAudioProcessingTapInitCallback = { tap, clientInfo, tapStorageOut in
+  tapStorageOut.pointee = clientInfo
+}
+
+private let eqTapFinalize: MTAudioProcessingTapFinalizeCallback = { tap in
+  let storage = MTAudioProcessingTapGetStorage(tap)
+  Unmanaged<VibeTapContext>.fromOpaque(storage).release()
+}
+
+private let eqTapPrepare: MTAudioProcessingTapPrepareCallback = { tap, _, processingFormat in
+  let storage = MTAudioProcessingTapGetStorage(tap)
+  let context = Unmanaged<VibeTapContext>.fromOpaque(storage).takeUnretainedValue()
+  context.prepare(format: processingFormat.pointee)
+}
+
+private let eqTapUnprepare: MTAudioProcessingTapUnprepareCallback = { _ in }
+
+private let eqTapProcess: MTAudioProcessingTapProcessCallback = {
+  tap, numberFrames, _, bufferListInOut, numberFramesOut, flagsOut in
+  var timeRange = CMTimeRange.zero
+  let status = MTAudioProcessingTapGetSourceAudio(
+    tap,
+    numberFrames,
+    bufferListInOut,
+    flagsOut,
+    &timeRange,
+    numberFramesOut
+  )
+  guard status == noErr else { return }
+  let storage = MTAudioProcessingTapGetStorage(tap)
+  let context = Unmanaged<VibeTapContext>.fromOpaque(storage).takeUnretainedValue()
+  context.process(bufferListInOut: bufferListInOut, frameCount: Int(numberFramesOut.pointee))
+}
+
+final class VibeEqualizerEngine {
+  static let shared = VibeEqualizerEngine()
+
+  private let lock = NSLock()
+  private var gains: [Double] = [0.5, 0.5, 0.5, 0.5, 0.5]
+  private var version: Int = 1
+  private let trackedItems = NSHashTable<AVPlayerItem>.weakObjects()
+  private var isObserving = false
+
+  func startObserving() {
+    guard !isObserving else { return }
+    isObserving = true
+
+    NotificationCenter.default.addObserver(
+      forName: .AVPlayerItemTimeJumped,
+      object: nil,
+      queue: .main
+    ) { [weak self] note in
+      if let item = note.object as? AVPlayerItem {
+        self?.attachTapIfNeeded(to: item)
+      }
+    }
+
+    NotificationCenter.default.addObserver(
+      forName: .AVPlayerItemNewAccessLogEntry,
+      object: nil,
+      queue: .main
+    ) { [weak self] note in
+      if let item = note.object as? AVPlayerItem {
+        self?.attachTapIfNeeded(to: item)
+      }
+    }
+  }
+
+  func updateGains(_ newGains: [Double]) {
+    guard newGains.count >= 5 else { return }
+    lock.lock()
+    gains = Array(newGains.prefix(5))
+    version &+= 1
+    let items = trackedItems.allObjects
+    lock.unlock()
+
+    DispatchQueue.main.async { [weak self] in
+      for item in items {
+        self?.attachTapIfNeeded(to: item)
+      }
+    }
+  }
+
+  func snapshotGains() -> (Int, [Double]) {
+    lock.lock()
+    defer { lock.unlock() }
+    return (version, gains)
+  }
+
+  func attachTapIfNeeded(to item: AVPlayerItem) {
+    lock.lock()
+    trackedItems.add(item)
+    lock.unlock()
+
+    if item.audioMix != nil {
+      return
+    }
+
+    let asset = item.asset
+    let applyMix: () -> Void = {
+      guard item.audioMix == nil,
+            let audioTrack = asset.tracks(withMediaType: .audio).first else {
+        return
+      }
+      let context = VibeTapContext()
+      var callbacks = MTAudioProcessingTapCallbacks(
+        version: kMTAudioProcessingTapCallbacksVersion_0,
+        clientInfo: UnsafeMutableRawPointer(Unmanaged.passRetained(context).toOpaque()),
+        init: eqTapInit,
+        finalize: eqTapFinalize,
+        prepare: eqTapPrepare,
+        unprepare: eqTapUnprepare,
+        process: eqTapProcess
+      )
+      var tap: Unmanaged<MTAudioProcessingTap>?
+      let err = MTAudioProcessingTapCreate(
+        kCFAllocatorDefault,
+        &callbacks,
+        kMTAudioProcessingTapCreationFlag_PostEffects,
+        &tap
+      )
+      guard err == noErr, let createdTap = tap else {
+        Unmanaged.passUnretained(context).release()
+        return
+      }
+      let params = AVMutableAudioMixInputParameters(track: audioTrack)
+      params.audioTapProcessor = createdTap.takeRetainedValue()
+      let mix = AVMutableAudioMix()
+      mix.inputParameters = [params]
+      item.audioMix = mix
+    }
+
+    if asset.statusOfValue(forKey: "tracks", error: nil) == .loaded {
+      applyMix()
+    } else {
+      asset.loadValuesAsynchronously(forKeys: ["tracks"]) {
+        DispatchQueue.main.async {
+          applyMix()
+        }
+      }
+    }
+  }
+}
+

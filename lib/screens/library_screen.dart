@@ -158,11 +158,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             tooltip: 'Importar archivos de música',
                           ),
                         IconButton(
-                          icon: const Icon(Icons.sync, color: AppColors.secondary),
-                          onPressed: () => audioService.scanLocalLibrary(),
-                          tooltip: 'Escanear música local',
-                        ),
-                        IconButton(
                           icon: Icon(
                             _isSearching ? Icons.close : Icons.search,
                             color: AppColors.primary,
@@ -596,13 +591,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: (song.source == 'spotify' ? const Color(0xFF1DB954) : const Color(0xFFFF4E45)).withOpacity(0.18),
+                                    color: AppColors.primaryContainer.withOpacity(0.55),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: Text(
                                     song.source == 'spotify' ? 'SPOTIFY' : 'YOUTUBE',
-                                    style: TextStyle(
-                                      color: song.source == 'spotify' ? const Color(0xFF1DB954) : const Color(0xFFFF4E45),
+                                    style: const TextStyle(
+                                      color: AppColors.secondary,
                                       fontSize: 9,
                                       fontWeight: FontWeight.bold,
                                     ),

@@ -587,11 +587,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   Widget _buildPlatformBadge(ParsedLink? link, {bool hasText = false}) {
     if (link == null) {
       if (hasText) {
-        const ytColor = Color(0xFFFF0000);
+        const ytColor = AppColors.primary;
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: ytColor.withOpacity(0.18),
+            color: AppColors.primaryContainer.withOpacity(0.45),
             border: Border.all(color: ytColor.withOpacity(0.5)),
             borderRadius: BorderRadius.circular(8),
           ),
@@ -619,7 +619,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     }
 
     final isSpotify = link.platform == LinkPlatform.spotify;
-    final color = isSpotify ? const Color(0xFF1DB954) : const Color(0xFFFF0000);
+    final color = isSpotify ? AppColors.secondary : AppColors.primary;
 
     String label = isSpotify ? 'Spotify' : 'YouTube';
     IconData icon = isSpotify ? Icons.graphic_eq : Icons.play_arrow;
@@ -634,8 +634,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
-        border: Border.all(color: color.withOpacity(0.6)),
+        color: AppColors.primaryContainer.withOpacity(0.45),
+        border: Border.all(color: color.withOpacity(0.55)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -761,8 +761,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 flex: 3,
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: isAlreadyAdded ? Colors.grey.shade800 : AppColors.primary,
-                    foregroundColor: Colors.white,
+                    backgroundColor: isAlreadyAdded ? AppColors.surfaceContainerLow : AppColors.primary,
+                    foregroundColor: isAlreadyAdded ? AppColors.onSurfaceVariant : AppColors.onPrimary,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     elevation: 4,
@@ -806,8 +806,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     PlaylistPreview playlist,
   ) {
     final isAlbum = playlist.type == LinkType.album;
-    final isSpotify = playlist.platform == LinkPlatform.spotify;
-    final primaryColor = isSpotify ? const Color(0xFF1DB954) : const Color(0xFFFF0000);
+    const primaryColor = AppColors.primary;
     final count = playlist.tracks.length;
     final durationStr = _formatPlaylistDuration(playlist.totalDuration);
     final displayedTracks = _showAllPlaylistTracks ? playlist.tracks : playlist.tracks.take(6).toList();
@@ -1013,7 +1012,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
+                    foregroundColor: AppColors.onPrimary,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     elevation: 4,

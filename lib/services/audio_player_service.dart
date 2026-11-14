@@ -215,12 +215,12 @@ class AudioPlayerService extends ChangeNotifier {
 
   final Map<String, List<double>> _presets = {
     'Normal': [0.50, 0.50, 0.50, 0.50, 0.50],
-    'Bajos Potentes': [0.90, 0.80, 0.55, 0.50, 0.45],
-    'Pop / Vocal': [0.45, 0.60, 0.85, 0.70, 0.55],
-    'Rock / Electrónica': [0.85, 0.65, 0.45, 0.75, 0.90],
-    'Urbano / Reggaetón': [0.88, 0.75, 0.50, 0.65, 0.78],
-    'Acústico': [0.55, 0.55, 0.65, 0.60, 0.50],
-    'Clásica': [0.65, 0.58, 0.48, 0.62, 0.72],
+    'Bajos Potentes': [0.96, 0.86, 0.46, 0.54, 0.58],
+    'Pop / Vocal': [0.38, 0.56, 0.88, 0.82, 0.62],
+    'Rock / Electrónica': [0.90, 0.72, 0.36, 0.80, 0.94],
+    'Urbano / Reggaetón': [0.94, 0.82, 0.44, 0.70, 0.84],
+    'Acústico': [0.62, 0.64, 0.74, 0.72, 0.60],
+    'Clásica': [0.72, 0.64, 0.44, 0.68, 0.82],
   };
 
   List<String> get availablePresets => _presets.keys.toList();
@@ -1108,6 +1108,7 @@ class AudioPlayerService extends ChangeNotifier {
 
     // Analizar el espectro en segundo plano (iOS); en Android es en vivo
     if (token == _playToken && _currentSong != null) {
+      _applyAudioGains();
       final songForSpectrum = (_currentSong!.localAudioPath == null || _currentSong!.localAudioPath!.isEmpty) &&
               _lastPlayedTempAudioPath != null
           ? _currentSong!.copyWith(localAudioPath: _lastPlayedTempAudioPath)
@@ -1302,14 +1303,11 @@ class AudioPlayerService extends ChangeNotifier {
     applyEqualizerPreset('Normal');
   }
 
-  double get currentTargetVolume {
-    if (_activePreset == 'Normal') return 1.0;
-    final avgGain = _equalizerGains.reduce((a, b) => a + b) / _equalizerGains.length;
-    return (0.4 + avgGain * 0.6).clamp(0.2, 1.0);
-  }
+  double get currentTargetVolume => 1.0;
 
   void _applyAudioGains() {
-    _player.setVolume(currentTargetVolume);
+    unawaited(_player.setVolume(currentTargetVolume));
+    unawaited(_handler.applyEqualizerGains(_equalizerGains));
   }
 
   void setAiTagging(bool value) {

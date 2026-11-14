@@ -122,6 +122,9 @@ class NowPlayingScreen extends StatelessWidget {
       );
     }
 
+    final topInset = MediaQueryData.fromView(View.of(context)).padding.top;
+    final topHeaderPadding = topInset > 0 ? topInset + 10.0 : 42.0;
+
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.background,
@@ -145,24 +148,18 @@ class NowPlayingScreen extends StatelessWidget {
 
           // Main Screen Shell
           SafeArea(
+            top: false,
             child: Column(
               children: [
-                // Top Header Bar
+                // Top Header Bar (con margen superior amplio para el notch de iPhone y sin el texto "Reproduciendo Ahora")
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 6.0),
+                  padding: EdgeInsets.fromLTRB(16.0, topHeaderPadding, 16.0, 4.0),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       IconButton(
                         icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary, size: 32),
                         onPressed: () => Navigator.of(context).pop(),
-                      ),
-                      Text(
-                        'Reproduciendo Ahora',
-                        style: AppTypography.headlineSm.copyWith(
-                          color: AppColors.primary,
-                          fontSize: 18,
-                        ),
                       ),
                       PopupMenuButton<String>(
                         icon: const Icon(Icons.settings, color: AppColors.primary, size: 26),

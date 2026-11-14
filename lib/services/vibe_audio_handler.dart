@@ -1,12 +1,28 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 
 /// Puente entre el reproductor (just_audio) y los controles del sistema:
 /// pantalla de bloqueo / Centro de Control en iOS, notificación y auriculares en Android.
 class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
-  final AudioPlayer player = AudioPlayer();
+  static const MethodChannel _iosEqualizerChannel = MethodChannel('vibe/equalizer');
+
+  late final AndroidEqualizer _androidEqualizer = AndroidEqualizer();
+  late final AndroidLoudnessEnhancer _androidLoudnessEnhancer = AndroidLoudnessEnhancer();
+
+  late final AudioPlayer player = AudioPlayer(
+    audioPipeline: Platform.isAndroid
+        ? AudioPipeline(
+            androidAudioEffects: [
+              _androidEqualizer,
+              _androidLoudnessEnhancer,
+            ],
+          )
+        : null,
+  );
 
   /// Callbacks que conecta AudioPlayerService para moverse por su propia cola
   Future<void> Function()? onSkipToNext;
@@ -147,11 +163,49 @@ class VibeAudioHandler extends BaseAudioHandler with SeekHandler {
       final session = await AudioSession.instance;
       await session.setActive(true);
     } catch (_) {}
+    if (Platform.isAndroid) {
+      unawaited(_androidEqualizer.setEnabled(true));
+      unawaited(_androidLoudnessEnhancer.setEnabled(true));
+    }
     await player.setAudioSource(source, initialPosition: Duration.zero);
     await player.setVolume(volume);
     isTransitioning = false;
     unawaited(player.play());
     _broadcastState();
+  }
+
+  /// Aplica las 5 bandas del ecualizador (60Hz, 230Hz, 910Hz, 4kHz, 14kHz) en tiempo real
+  Future<void> applyEqualizerGains(List<double> normalizedGains) async {
+    if (normalizedGains.length < 5) return;
+    if (Platform.isIOS) {
+      try {
+        await _iosEqualizerChannel.invokeMethod('setGains', {
+          'gains': normalizedGains.take(5).toList(),
+        });
+      } catch (_) {}
+    } else if (Platform.isAndroid) {
+      try {
+        await _androidEqualizer.setEnabled(true);
+        final params = await _androidEqualizer.parameters;
+        final minDb = params.minDecibels;
+        final maxDb = params.maxDecibels;
+        final bands = params.bands;
+        for (int i = 0; i < bands.length; i++) {
+          final normIdx = bands.length == 1
+              ? 0.0
+              : (i / (bands.length - 1)) * 4.0;
+          final lowIdx = normIdx.floor().clamp(0, 4);
+          final highIdx = normIdx.ceil().clamp(0, 4);
+          final t = normIdx - lowIdx;
+          final g = normalizedGains[lowIdx] * (1.0 - t) + normalizedGains[highIdx] * t;
+          final targetDb = minDb + g.clamp(0.0, 1.0) * (maxDb - minDb);
+          await bands[i].setGain(targetDb.clamp(minDb, maxDb));
+        }
+        await _androidLoudnessEnhancer.setEnabled(true);
+        final bassBoost = ((normalizedGains[0] - 0.5) * 6.0).clamp(0.0, 4.0);
+        await _androidLoudnessEnhancer.setTargetGain(bassBoost);
+      } catch (_) {}
+    }
   }
 
   /// Actualiza los metadatos mostrados sin recargar el audio (ej: al editar título)

@@ -9,7 +9,7 @@ class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   String _formatDb(double normalizedGain) {
-    final db = (normalizedGain - 0.5) * 24.0; // -12.0 dB a +12.0 dB
+    final db = (normalizedGain - 0.5) * 30.0; // -15.0 dB a +15.0 dB
     if (db.abs() < 0.05) return '0.0 dB';
     final sign = db > 0 ? '+' : '';
     return '$sign${db.toStringAsFixed(1)} dB';
