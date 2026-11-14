@@ -126,10 +126,11 @@ class YouTubeStreamResolver {
           }).toList();
 
           if (audioFormats.isNotEmpty) {
-            // Preferir itag 140 (audio/mp4 AAC-LC 128kbps) para compatibilidad nativa en iOS/Android
+            // Preferir formato ligero audio/mp4 (itag 139 HE-AAC ~48kbps ~1.2 MB por canción, o menor bitrate disponible)
+            // para reducir drásticamente el peso de los archivos .m4a manteniendo compatibilidad nativa
             Map<String, dynamic>? selected;
             for (final f in audioFormats) {
-              if (f['itag'] == 140) {
+              if (f['itag'] == 139) {
                 selected = f;
                 break;
               }
@@ -137,13 +138,13 @@ class YouTubeStreamResolver {
             if (selected == null) {
               final mp4List = audioFormats.where((f) {
                 final mime = (f['mimeType'] as String?) ?? '';
-                return mime.startsWith('audio/mp4') && f['itag'] != 139 && !mime.contains('40.5');
+                return mime.startsWith('audio/mp4');
               }).toList();
               final pool = mp4List.isNotEmpty ? mp4List : audioFormats;
               pool.sort((a, b) {
-                final brA = (a['bitrate'] as num?)?.toInt() ?? 0;
-                final brB = (b['bitrate'] as num?)?.toInt() ?? 0;
-                return brB.compareTo(brA);
+                final brA = (a['bitrate'] as num?)?.toInt() ?? 999999;
+                final brB = (b['bitrate'] as num?)?.toInt() ?? 999999;
+                return brA.compareTo(brB);
               });
               selected = pool.first;
             }
@@ -174,12 +175,9 @@ class YouTubeStreamResolver {
         final audioStreams = manifest.audioOnly.toList();
         if (audioStreams.isNotEmpty) {
           final mp4Streams = audioStreams.where((s) => s.container == StreamContainer.mp4).toList();
-          // Preferir AAC-LC (mp4a.40.2, tag 140) sobre HE-AAC SBR (mp4a.40.5, tag 139)
-          // para evitar que AVPlayer/ExoPlayer dupliquen la duración reportada
-          final aacLcStreams = mp4Streams.where((s) => s.tag != 139 && !s.codec.toString().contains('40.5')).toList();
-          final stream = aacLcStreams.isNotEmpty
-              ? aacLcStreams.withHighestBitrate()
-              : (mp4Streams.isNotEmpty ? mp4Streams.withHighestBitrate() : audioStreams.withHighestBitrate());
+          final pool = mp4Streams.isNotEmpty ? mp4Streams : audioStreams;
+          pool.sort((a, b) => a.bitrate.bitsPerSecond.compareTo(b.bitrate.bitsPerSecond));
+          final stream = pool.first;
 
           return StreamAudioResult(
             streamUrl: stream.url.toString(),
@@ -216,9 +214,9 @@ class YouTubeStreamResolver {
                 final aIsMp4 = (a['type'] as String).contains('mp4') ? 1 : 0;
                 final bIsMp4 = (b['type'] as String).contains('mp4') ? 1 : 0;
                 if (aIsMp4 != bIsMp4) return bIsMp4.compareTo(aIsMp4);
-                final aBitrate = int.tryParse(a['bitrate']?.toString() ?? '0') ?? 0;
-                final bBitrate = int.tryParse(b['bitrate']?.toString() ?? '0') ?? 0;
-                return bBitrate.compareTo(aBitrate);
+                final aBitrate = int.tryParse(a['bitrate']?.toString() ?? '999999') ?? 999999;
+                final bBitrate = int.tryParse(b['bitrate']?.toString() ?? '999999') ?? 999999;
+                return aBitrate.compareTo(bBitrate);
               });
 
               final selected = audioList.first;
@@ -243,7 +241,7 @@ class YouTubeStreamResolver {
     throw Exception('No se pudo obtener la pista de audio de este video.');
   }
 
-  /// Retorna el archivo local de la canción, descargándolo a la caché si aún no existe
+  /// Obtiene el archivo de reproducción temporal en caché (o de vibe_offline si ya fue descargado)
   static Future<File> getOrDownloadStreamAudio(String videoId) async {
     if (_activeDownloads.containsKey(videoId)) {
       return await _activeDownloads[videoId]!;
@@ -259,8 +257,26 @@ class YouTubeStreamResolver {
   }
 
   static Future<File> _getOrDownloadInternal(String videoId) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final streamsDir = Directory(path.join(dir.path, 'vibe_streams'));
+    // 1. Si ya fue descargada en vibe_offline, usar ese archivo directamente
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final offlineDir = Directory(path.join(docDir.path, 'vibe_offline'));
+      if (await offlineDir.exists()) {
+        final entities = offlineDir.listSync(recursive: false);
+        for (final entity in entities) {
+          if (entity is File && path.basename(entity.path).contains(videoId)) {
+            if (await entity.length() > 25000) {
+              return entity;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 2. Para reproducción en streaming sin descargar a la biblioteca, usar directorio temporal
+    // del sistema y limpiar buffers anteriores para no acumular peso en la app
+    final tempDir = await getTemporaryDirectory();
+    final streamsDir = Directory(path.join(tempDir.path, 'vibe_stream_temp'));
     if (!await streamsDir.exists()) {
       await streamsDir.create(recursive: true);
     }
@@ -268,13 +284,30 @@ class YouTubeStreamResolver {
     final file = File(path.join(streamsDir.path, 'stream_$videoId.m4a'));
     if (await file.exists()) {
       final len = await file.length();
-      if (len > 50000) {
+      if (len > 25000) {
         return file;
       }
       try {
         await file.delete();
       } catch (_) {}
     }
+
+    // Limpiar buffers temporales viejos dejando máximo 2 pistas recientes en caché temporal
+    try {
+      final existing = streamsDir
+          .listSync(recursive: false)
+          .whereType<File>()
+          .where((f) => f.path != file.path)
+          .toList();
+      if (existing.length >= 2) {
+        existing.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+        for (int i = 0; i <= existing.length - 2; i++) {
+          try {
+            await existing[i].delete();
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
 
     return await downloadToFile(videoId, file.path);
   }

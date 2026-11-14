@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -50,6 +51,9 @@ class AudioPlayerService extends ChangeNotifier {
 
   Duration _duration = Duration.zero;
   Duration get duration => _duration;
+
+  bool _hasExactM4aDuration = false;
+  String? _lastPlayedTempAudioPath;
 
   bool _isShuffle = false;
   bool get isShuffle => _isShuffle;
@@ -324,6 +328,10 @@ class AudioPlayerService extends ChangeNotifier {
 
     _player.durationStream.listen((dur) {
       if (dur != null && dur > Duration.zero) {
+        if (_hasExactM4aDuration && _duration > Duration.zero) {
+          notifyListeners();
+          return;
+        }
         // Protección contra el bug de decodificación SBR / AAC-HE en ExoPlayer y AVPlayer
         // o discrepancias de contenedor cuando ya conocemos la duración exacta del m4a:
         if (_currentSong != null && _currentSong!.duration > Duration.zero) {
@@ -434,14 +442,28 @@ class AudioPlayerService extends ChangeNotifier {
                   if (metadataCache.containsKey(entity.path)) {
                     song = metadataCache[entity.path]!;
                   } else {
-                    song = Song(
-                      id: entity.path,
-                      title: fileName,
-                      artist: 'Artista Local',
-                      album: 'Biblioteca Local',
-                      localAudioPath: entity.path,
-                      isDownloaded: true,
-                    );
+                    // Buscar coincidencia por nombre de archivo por si cambió el UUID del contenedor de iOS al reinstalar cada 7 días
+                    final baseName = path.basename(entity.path);
+                    final matchedByBase = metadataCache.values.where((s) =>
+                        !s.isImported &&
+                        s.localAudioPath != null &&
+                        path.basename(s.localAudioPath!) == baseName).toList();
+                    if (matchedByBase.isNotEmpty) {
+                      song = matchedByBase.first.copyWith(
+                        id: entity.path,
+                        localAudioPath: entity.path,
+                        isDownloaded: true,
+                      );
+                    } else {
+                      song = Song(
+                        id: entity.path,
+                        title: fileName,
+                        artist: 'Artista Local',
+                        album: 'Biblioteca Local',
+                        localAudioPath: entity.path,
+                        isDownloaded: true,
+                      );
+                    }
                   }
 
                   loadedSongs.add(song);
@@ -456,14 +478,36 @@ class AudioPlayerService extends ChangeNotifier {
       loadedSongs.removeWhere((s) =>
           !s.isStreaming && s.youtubeId == null && s.localAudioPath != null && !File(s.localAudioPath!).existsSync());
 
+      // Migrar canciones previamente guardadas en vibe_streams hacia vibe_offline para que
+      // vibe_offline contenga todas las descargas offline y eliminar la carpeta antigua vibe_streams
+      final offlineDir = Directory(path.join(appDir.path, 'vibe_offline'));
+      if (!await offlineDir.exists()) {
+        await offlineDir.create(recursive: true);
+      }
+      final legacyStreamsDir = Directory(path.join(appDir.path, 'vibe_streams'));
+
       // Canciones en streaming o importadas (YouTube / Spotify): no tienen archivo o se descargaron,
       // así que aseguramos que NUNCA se pierdan ni se eliminen
       for (final cached in metadataCache.values) {
         if (cached.youtubeId != null || cached.isStreaming || cached.isImported) {
           Song s = cached;
           if (s.localAudioPath != null && s.localAudioPath!.isNotEmpty) {
-            final f = File(s.localAudioPath!);
-            if (!f.existsSync() || f.lengthSync() < 50000) {
+            var f = File(s.localAudioPath!);
+            if (f.existsSync() && f.lengthSync() > 25000) {
+              // Si estaba en la carpeta antigua vibe_streams, moverlo a vibe_offline
+              if (s.localAudioPath!.contains('vibe_streams')) {
+                try {
+                  final safeName = '${s.artist} - ${s.title}'.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+                  final newTargetPath = path.join(offlineDir.path, '${s.id}_$safeName.m4a');
+                  if (!File(newTargetPath).existsSync()) {
+                    await f.copy(newTargetPath);
+                  }
+                  await f.delete();
+                  f = File(newTargetPath);
+                  s = s.copyWith(localAudioPath: newTargetPath, isDownloaded: true);
+                } catch (_) {}
+              }
+            } else {
               s = s.copyWith(localAudioPath: '', isDownloaded: false);
             }
           }
@@ -471,6 +515,12 @@ class AudioPlayerService extends ChangeNotifier {
             loadedSongs.add(s);
           }
         }
+      }
+
+      if (await legacyStreamsDir.exists()) {
+        try {
+          await legacyStreamsDir.delete(recursive: true);
+        } catch (_) {}
       }
       for (final existing in _librarySongs) {
         if ((existing.youtubeId != null || existing.isStreaming || existing.isImported) &&
@@ -522,6 +572,37 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
+  /// Reconstruye rutas locales cuando iOS cambia el UUID del contenedor de la app al reinstalar cada 7 días
+  String? _rebaseSandboxPath(String? savedPath, String currentDocDirPath) {
+    if (savedPath == null || savedPath.isEmpty) return savedPath;
+    if (savedPath.startsWith('ph://')) return savedPath;
+    if (File(savedPath).existsSync()) return savedPath;
+
+    final normalized = savedPath.replaceAll('\\', '/');
+    const docsMarker = '/Documents/';
+    final idx = normalized.indexOf(docsMarker);
+    if (idx != -1) {
+      final relativePart = normalized.substring(idx + docsMarker.length);
+      final candidate = path.join(currentDocDirPath, relativePart);
+      if (File(candidate).existsSync()) {
+        return candidate;
+      }
+    }
+    return savedPath;
+  }
+
+  Song _rebaseSongPaths(Song song, String currentDocDirPath) {
+    final rebasedId = (!song.isImported && song.id.contains('/Documents/'))
+        ? (_rebaseSandboxPath(song.id, currentDocDirPath) ?? song.id)
+        : song.id;
+    return song.copyWith(
+      id: rebasedId,
+      localAudioPath: _rebaseSandboxPath(song.localAudioPath, currentDocDirPath),
+      localCoverPath: _rebaseSandboxPath(song.localCoverPath, currentDocDirPath),
+      videoCoverPath: _rebaseSandboxPath(song.videoCoverPath, currentDocDirPath),
+    );
+  }
+
   /// Cargar caché persistente en disco (metadata_store.json + copia de seguridad)
   Future<Map<String, Song>> _loadMetadataCache() async {
     final Map<String, Song> cache = {};
@@ -529,25 +610,34 @@ class AudioPlayerService extends ChangeNotifier {
       final docDir = await getApplicationDocumentsDirectory();
       final cacheFile = File(path.join(docDir.path, 'metadata_store.json'));
       final backupFile = File(path.join(docDir.path, 'streaming_backup.json'));
+      final offlineBackupFile = File(path.join(docDir.path, 'vibe_offline', '.vibe_metadata_backup.json'));
 
       if (await cacheFile.exists()) {
         final content = await cacheFile.readAsString();
         final List<dynamic> jsonList = json.decode(content);
         for (final item in jsonList) {
-          final song = Song.fromJson(item as Map<String, dynamic>);
+          final song = _rebaseSongPaths(Song.fromJson(item as Map<String, dynamic>), docDir.path);
           cache[song.id] = song;
         }
       }
 
-      // Cargar también la copia de seguridad para garantizar que ninguna canción streaming se pierda
-      if (await backupFile.exists()) {
-        final content = await backupFile.readAsString();
-        final List<dynamic> jsonList = json.decode(content);
-        for (final item in jsonList) {
-          final song = Song.fromJson(item as Map<String, dynamic>);
-          if (!cache.containsKey(song.id)) {
-            cache[song.id] = song;
-          }
+      // Cargar también las copias de seguridad para garantizar que ninguna canción o video asignado se pierda
+      for (final bFile in [backupFile, offlineBackupFile]) {
+        if (await bFile.exists()) {
+          try {
+            final content = await bFile.readAsString();
+            final List<dynamic> jsonList = json.decode(content);
+            for (final item in jsonList) {
+              final song = _rebaseSongPaths(Song.fromJson(item as Map<String, dynamic>), docDir.path);
+              if (!cache.containsKey(song.id)) {
+                cache[song.id] = song;
+              } else if ((cache[song.id]!.videoCoverPath == null || cache[song.id]!.videoCoverPath!.isEmpty) &&
+                  song.videoCoverPath != null &&
+                  song.videoCoverPath!.isNotEmpty) {
+                cache[song.id] = cache[song.id]!.copyWith(videoCoverPath: song.videoCoverPath);
+              }
+            }
+          } catch (_) {}
         }
       }
     } catch (e) {
@@ -562,10 +652,16 @@ class AudioPlayerService extends ChangeNotifier {
       final docDir = await getApplicationDocumentsDirectory();
       final cacheFile = File(path.join(docDir.path, 'metadata_store.json'));
       final backupFile = File(path.join(docDir.path, 'streaming_backup.json'));
+      final offlineDir = Directory(path.join(docDir.path, 'vibe_offline'));
+      if (!await offlineDir.exists()) {
+        await offlineDir.create(recursive: true);
+      }
+      final offlineBackupFile = File(path.join(offlineDir.path, '.vibe_metadata_backup.json'));
 
       final jsonList = _librarySongs.map((s) => s.toJson()).toList();
       final content = json.encode(jsonList);
       await cacheFile.writeAsString(content);
+      await offlineBackupFile.writeAsString(content);
 
       // Copia de seguridad exclusiva de canciones streaming e importadas
       final streamingOnly = _librarySongs.where((s) => s.youtubeId != null || s.isStreaming).map((s) => s.toJson()).toList();
@@ -580,7 +676,11 @@ class AudioPlayerService extends ChangeNotifier {
 
   /// Descargar una canción de streaming para escucharla 100% offline sin conexión
   Future<void> downloadSongForOffline(Song song) async {
-    if (song.localAudioPath != null && await File(song.localAudioPath!).exists() && await File(song.localAudioPath!).length() > 50000) {
+    if (song.isDownloaded &&
+        song.localAudioPath != null &&
+        song.localAudioPath!.contains('vibe_offline') &&
+        await File(song.localAudioPath!).exists() &&
+        await File(song.localAudioPath!).length() > 25000) {
       return;
     }
 
@@ -599,7 +699,7 @@ class AudioPlayerService extends ChangeNotifier {
       }
 
       final docDir = await getApplicationDocumentsDirectory();
-      // Guardar en vibe_offline dentro de documentos privados de la app para no generar duplicados en el escáner
+      // Guardar en vibe_offline dentro de documentos de la app para que aparezca en la carpeta vibe_offline
       final targetDir = Directory(path.join(docDir.path, 'vibe_offline'));
       if (!await targetDir.exists()) {
         await targetDir.create(recursive: true);
@@ -638,20 +738,16 @@ class AudioPlayerService extends ChangeNotifier {
   final List<Song> _backgroundQueue = [];
   bool _isProcessingBackgroundQueue = false;
 
-  /// Encola canciones para resolver su enlace de YouTube, su carátula real y descargarlas en segundo plano
+  /// Encola canciones únicamente para resolver su ID de YouTube y su carátula (sin descargar el audio automáticamente)
   void enqueueForBackgroundProcessing(List<Song> songs, {bool highPriority = false}) {
     final toInsert = <Song>[];
     for (final song in songs) {
-      final needsAudio = song.localAudioPath == null ||
-          song.localAudioPath!.isEmpty ||
-          !File(song.localAudioPath!).existsSync() ||
-          File(song.localAudioPath!).lengthSync() < 50000 ||
-          song.youtubeId == null;
+      final needsYoutubeId = song.youtubeId == null || song.youtubeId!.isEmpty;
       final needsCover = song.localCoverPath == null ||
           song.localCoverPath!.isEmpty ||
           !File(song.localCoverPath!).existsSync();
 
-      if (needsAudio || needsCover) {
+      if (needsYoutubeId || needsCover) {
         _backgroundQueue.removeWhere((s) => s.id == song.id);
         if (highPriority) {
           toInsert.add(song);
@@ -683,11 +779,9 @@ class AudioPlayerService extends ChangeNotifier {
         song = _librarySongs[latestIdx];
       }
 
-      final hasAudio = song.localAudioPath != null &&
-          File(song.localAudioPath!).existsSync() &&
-          File(song.localAudioPath!).lengthSync() > 50000;
+      final hasYoutubeId = song.youtubeId != null && song.youtubeId!.isNotEmpty;
       final hasCover = song.localCoverPath != null && File(song.localCoverPath!).existsSync();
-      if (hasAudio && hasCover) continue;
+      if (hasYoutubeId && hasCover) continue;
 
       try {
         await _preloadSongInBackground(song);
@@ -703,7 +797,10 @@ class AudioPlayerService extends ChangeNotifier {
 
   void addSong(Song song) {
     _librarySongs.removeWhere((s) =>
-        s.id == song.id || (song.localAudioPath != null && s.localAudioPath == song.localAudioPath));
+        s.id == song.id ||
+        (song.localAudioPath != null &&
+            song.localAudioPath!.isNotEmpty &&
+            s.localAudioPath == song.localAudioPath));
     _librarySongs.insert(0, song);
     if (_currentSong == null) {
       _currentSong = song;
@@ -714,17 +811,20 @@ class AudioPlayerService extends ChangeNotifier {
     _saveMetadataCache();
     notifyListeners();
 
-    // Iniciar descarga y resolución en segundo plano inmediatamente
+    // Resolver únicamente carátula e ID de YouTube en segundo plano (sin descargar el archivo de audio)
     enqueueForBackgroundProcessing([song]);
   }
 
   /// Agrega múltiples canciones en lote a la biblioteca y opcionalmente a una playlist
   Future<void> addSongs(List<Song> songs, {String? targetPlaylist}) async {
     // Insertar en orden inverso al índice 0 para que la primera canción de la playlist
-    // quede arriba de todo en "En tu Biblioteca" y coincida con el orden de descarga (1..N)
+    // quede arriba de todo en "En tu Biblioteca" y coincida con el orden de la playlist (1..N)
     for (final song in songs.reversed) {
       _librarySongs.removeWhere((s) =>
-          s.id == song.id || (song.localAudioPath != null && s.localAudioPath == song.localAudioPath));
+          s.id == song.id ||
+          (song.localAudioPath != null &&
+              song.localAudioPath!.isNotEmpty &&
+              s.localAudioPath == song.localAudioPath));
       _librarySongs.insert(0, song);
     }
     if (_currentSong == null && songs.isNotEmpty) {
@@ -746,15 +846,12 @@ class AudioPlayerService extends ChangeNotifier {
     await _saveMetadataCache();
     notifyListeners();
 
-    // Iniciar descarga y enriquecimiento de carátulas en segundo plano desde la primera hasta la última
+    // Enriquecer carátulas e IDs de YouTube en segundo plano sin descargar archivos de audio automáticamente
     enqueueForBackgroundProcessing(songs);
   }
 
-  /// Descarga el audio en segundo plano de forma silenciosa e instantánea, resolviendo metadatos si faltan
+  /// Resuelve el ID de YouTube y la carátula en segundo plano sin descargar el archivo de audio
   Future<void> _preloadSongInBackground(Song song) async {
-    _downloadingSongIds.add(song.id);
-    notifyListeners();
-
     try {
       // 1. Resolver enlace de YouTube si aún no está asignado
       if (song.youtubeId == null || song.youtubeId!.isEmpty) {
@@ -790,31 +887,9 @@ class AudioPlayerService extends ChangeNotifier {
           await _saveMetadataCache();
         }
       }
-
-      // 3. Descargar el archivo de audio a la caché local
-      final cachedFile = await YouTubeStreamResolver.getOrDownloadStreamAudio(song.youtubeId!);
-      if (await cachedFile.exists() && await cachedFile.length() > 50000) {
-        Duration songDuration = song.duration;
-        final exactM4aDur = await AudioDurationHelper.readM4aDuration(cachedFile);
-        if (exactM4aDur != null && exactM4aDur > Duration.zero) {
-          songDuration = exactM4aDur;
-        }
-
-        final updated = song.copyWith(
-          localAudioPath: cachedFile.path,
-          duration: songDuration,
-          isDownloaded: true,
-        );
-        _updateSongInLists(updated);
-        if (_currentSong?.id == song.id) {
-          _handler.updateNowPlaying(_mediaItemFor(updated));
-        }
-        await _saveMetadataCache();
-      }
     } catch (e) {
-      print('Error precargando canción en segundo plano (${song.title}): $e');
+      print('Error resolviendo metadatos en segundo plano (${song.title}): $e');
     } finally {
-      _downloadingSongIds.remove(song.id);
       notifyListeners();
     }
   }
@@ -912,18 +987,23 @@ class AudioPlayerService extends ChangeNotifier {
 
   Future<void> playSong(Song song) async {
     final token = ++_playToken;
-    // Obtener siempre la versión más reciente de la biblioteca (por si ya se descargó en segundo plano)
+    // Obtener siempre la versión más reciente de la biblioteca (si pertenece a la biblioteca)
     final libIdx = _librarySongs.indexWhere((s) => s.id == song.id);
     if (libIdx != -1) {
       song = _librarySongs[libIdx];
     }
 
     _currentSong = song;
+    _hasExactM4aDuration = false;
+    _lastPlayedTempAudioPath = null;
     if (song.duration > Duration.zero) {
       _duration = song.duration;
     }
     _position = Duration.zero;
-    if (_activeQueue.isEmpty || !_activeQueue.any((s) => s.id == song.id)) {
+    if (libIdx == -1) {
+      // Es una canción reproducida desde Explorar sin haberla agregado a la biblioteca
+      _activeQueue = [song];
+    } else if (_activeQueue.isEmpty || !_activeQueue.any((s) => s.id == song.id)) {
       _activeQueue = List.from(_librarySongs);
     } else {
       // Sincronizar elementos de la cola activa con las versiones más recientes de la biblioteca
@@ -942,8 +1022,8 @@ class AudioPlayerService extends ChangeNotifier {
     final currentIdx = _activeQueue.indexWhere((s) => s.id == song.id);
     _handler.updateQueueState(queueItems, currentIdx >= 0 ? currentIdx : 0);
 
-    // Priorizar las siguientes 2 canciones de la cola en el descargador en segundo plano
-    if (_activeQueue.length > 1 && currentIdx != -1) {
+    // Resolver metadatos/carátulas de las siguientes 2 canciones de la cola en segundo plano
+    if (libIdx != -1 && _activeQueue.length > 1 && currentIdx != -1) {
       final nextCandidates = <Song>[];
       final next1 = _activeQueue[(currentIdx + 1) % _activeQueue.length];
       if (next1.id != song.id) nextCandidates.add(next1);
@@ -958,17 +1038,25 @@ class AudioPlayerService extends ChangeNotifier {
 
     try {
       bool playedFromLocal = false;
-      if (song.localAudioPath != null && await File(song.localAudioPath!).exists()) {
+      if (song.localAudioPath != null &&
+          song.localAudioPath!.isNotEmpty &&
+          await File(song.localAudioPath!).exists()) {
         final f = File(song.localAudioPath!);
-        if (await f.length() > 50000) {
+        if (await f.length() > 25000) {
           if (song.localAudioPath!.toLowerCase().endsWith('.m4a') ||
               song.localAudioPath!.toLowerCase().endsWith('.mp4')) {
             final exactM4aDur = await AudioDurationHelper.readM4aDuration(f);
-            if (exactM4aDur != null && exactM4aDur > Duration.zero && exactM4aDur != song.duration) {
-              song = song.copyWith(duration: exactM4aDur);
-              _updateSongInLists(song);
-              mediaItem = _mediaItemFor(song);
-              unawaited(_saveMetadataCache());
+            if (exactM4aDur != null && exactM4aDur > Duration.zero) {
+              _hasExactM4aDuration = true;
+              _duration = exactM4aDur;
+              if (exactM4aDur != song.duration) {
+                song = song.copyWith(duration: exactM4aDur);
+                _updateSongInLists(song);
+                mediaItem = _mediaItemFor(song);
+                if (libIdx != -1) {
+                  unawaited(_saveMetadataCache());
+                }
+              }
             }
           }
           await _handler.loadAndPlay(
@@ -991,7 +1079,7 @@ class AudioPlayerService extends ChangeNotifier {
           await _player.setVolume(0.0);
         }
         if (song.youtubeId != null || song.source == 'spotify' || song.isImported) {
-          await _playStreaming(song, mediaItem, token);
+          await _playStreaming(song, mediaItem, token, isInLibrary: libIdx != -1);
         } else if (song.audioUrl != null) {
           await _handler.loadAndPlay(
             mediaItem,
@@ -1020,16 +1108,23 @@ class AudioPlayerService extends ChangeNotifier {
 
     // Analizar el espectro en segundo plano (iOS); en Android es en vivo
     if (token == _playToken && _currentSong != null) {
-      unawaited(spectrum.onTrackChanged(_currentSong!));
+      final songForSpectrum = (_currentSong!.localAudioPath == null || _currentSong!.localAudioPath!.isEmpty) &&
+              _lastPlayedTempAudioPath != null
+          ? _currentSong!.copyWith(localAudioPath: _lastPlayedTempAudioPath)
+          : _currentSong!;
+      unawaited(spectrum.onTrackChanged(songForSpectrum));
     }
   }
 
-  /// Reproduce una canción en streaming desde YouTube.
-  /// Obtiene o descarga el audio de forma transparente a la caché local
-  /// evitando el error 403 de ExoPlayer y permitiendo reproducción offline inmediata.
-  Future<void> _playStreaming(Song song, MediaItem mediaItem, int token) async {
+  /// Reproduce una canción en streaming desde YouTube usando un buffer temporal ligero,
+  /// sin agregarla automáticamente a la biblioteca ni marcarla como descargada a menos que ya esté en vibe_offline.
+  Future<void> _playStreaming(
+    Song song,
+    MediaItem mediaItem,
+    int token, {
+    bool isInLibrary = true,
+  }) async {
     _isBuffering = true;
-    _downloadingSongIds.add(song.id);
     notifyListeners();
 
     try {
@@ -1041,8 +1136,12 @@ class AudioPlayerService extends ChangeNotifier {
           throw Exception('No se encontró el audio de "${song.title}" en YouTube');
         }
         final withYt = song.copyWith(youtubeId: ytId);
-        _updateSongInLists(withYt);
-        unawaited(_saveMetadataCache());
+        if (isInLibrary) {
+          _updateSongInLists(withYt);
+          unawaited(_saveMetadataCache());
+        } else if (_currentSong?.id == song.id) {
+          _currentSong = withYt;
+        }
         song = withYt;
       }
 
@@ -1053,16 +1152,26 @@ class AudioPlayerService extends ChangeNotifier {
       final exactM4aDur = await AudioDurationHelper.readM4aDuration(cachedFile);
       if (exactM4aDur != null && exactM4aDur > Duration.zero) {
         songDuration = exactM4aDur;
+        _hasExactM4aDuration = true;
+        _duration = exactM4aDur;
       }
 
-      // Actualizar automáticamente la ruta local y duración exacta para que quede guardada y funcione sin internet
+      _lastPlayedTempAudioPath = cachedFile.path;
+      final isSavedInOfflineFolder = cachedFile.path.contains('vibe_offline');
+
       final updated = song.copyWith(
-        localAudioPath: cachedFile.path,
+        localAudioPath: isSavedInOfflineFolder ? cachedFile.path : song.localAudioPath,
         duration: songDuration,
-        isDownloaded: true,
+        isDownloaded: isSavedInOfflineFolder ? true : song.isDownloaded,
       );
-      _updateSongInLists(updated);
-      unawaited(_saveMetadataCache());
+
+      if (isInLibrary) {
+        _updateSongInLists(updated);
+        unawaited(_saveMetadataCache());
+      } else {
+        _currentSong = updated;
+        _activeQueue = [updated];
+      }
 
       final updatedMediaItem = _mediaItemFor(updated);
       await _handler.loadAndPlay(
@@ -1071,15 +1180,14 @@ class AudioPlayerService extends ChangeNotifier {
         volume: currentTargetVolume,
       );
 
-      // Si aún le falta carátula local individual, encolarla en segundo plano
-      if (updated.localCoverPath == null || !File(updated.localCoverPath!).existsSync()) {
+      // Si está en la biblioteca y aún le falta carátula local individual, encolarla en segundo plano
+      if (isInLibrary && (updated.localCoverPath == null || !File(updated.localCoverPath!).existsSync())) {
         enqueueForBackgroundProcessing([updated]);
       }
     } catch (e) {
       print('Streaming playback error: $e');
       rethrow;
     } finally {
-      _downloadingSongIds.remove(song.id);
       notifyListeners();
     }
   }
@@ -1223,24 +1331,31 @@ class AudioPlayerService extends ChangeNotifier {
     return enriched;
   }
 
-  /// Seleccionar y asignar un Video de la Galería como Carátula (sin audio, en bucle infinito)
+  /// Seleccionar y asignar un Video de la Galería como Carátula (sin duplicar archivos ni crear carpetas extras)
   Future<Song?> setVideoCoverForSong(Song song) async {
     try {
-      final picker = ImagePicker();
-      final XFile? pickedFile = await picker.pickVideo(source: ImageSource.gallery);
+      String? videoRef;
 
-      if (pickedFile != null) {
-        final docDir = await getApplicationDocumentsDirectory();
-        final videoDir = Directory(path.join(docDir.path, 'video_covers'));
-        if (!await videoDir.exists()) {
-          await videoDir.create(recursive: true);
-        }
+      if (Platform.isIOS) {
+        const galleryChannel = MethodChannel('vibe/gallery');
+        videoRef = await galleryChannel.invokeMethod<String>('pickVideo');
+      } else {
+        final picker = ImagePicker();
+        final XFile? pickedFile = await picker.pickVideo(source: ImageSource.gallery);
+        videoRef = pickedFile?.path;
+      }
 
-        final sanitizedId = song.id.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-        final targetPath = path.join(videoDir.path, 'video_$sanitizedId.mp4');
-        await File(pickedFile.path).copy(targetPath);
+      if (videoRef != null && videoRef.isNotEmpty) {
+        // Limpiar carpeta antigua video_covers si existía para no dejar videos duplicados ocupando espacio
+        try {
+          final docDir = await getApplicationDocumentsDirectory();
+          final legacyVideoDir = Directory(path.join(docDir.path, 'video_covers'));
+          if (await legacyVideoDir.exists()) {
+            await legacyVideoDir.delete(recursive: true);
+          }
+        } catch (_) {}
 
-        final updated = song.copyWith(videoCoverPath: targetPath);
+        final updated = song.copyWith(videoCoverPath: videoRef);
         final index = _librarySongs.indexWhere((s) => s.id == song.id);
         if (index != -1) {
           _librarySongs[index] = updated;
@@ -1248,6 +1363,9 @@ class AudioPlayerService extends ChangeNotifier {
             _currentSong = updated;
           }
           await _saveMetadataCache();
+          notifyListeners();
+        } else if (_currentSong?.id == song.id) {
+          _currentSong = updated;
           notifyListeners();
         }
         return updated;

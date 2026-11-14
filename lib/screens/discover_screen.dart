@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../models/song_model.dart';
 import '../services/audio_player_service.dart';
 import '../services/link_import_service.dart';
 import '../theme/app_colors.dart';
@@ -78,6 +79,38 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           _errorMessage = e.toString().replaceAll('Exception: ', '').replaceAll('FormatException: ', '');
           _isLoading = false;
         });
+      }
+    }
+  }
+
+  Future<void> _playPreviewOnly(
+    AudioPlayerService audioService,
+    ImportPreview preview,
+  ) async {
+    try {
+      final tempSong = Song(
+        id: preview.songId,
+        title: preview.title,
+        artist: preview.artist,
+        album: preview.album,
+        coverUrl: preview.coverUrl,
+        duration: preview.duration,
+        genre: preview.genre,
+        year: preview.year,
+        youtubeId: preview.youtubeId,
+        sourceUrl: preview.sourceUrl,
+        source: preview.platform == LinkPlatform.spotify ? 'spotify' : 'youtube',
+        isDownloaded: false,
+      );
+      await audioService.playSong(tempSong);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text('Error al reproducir: $e'),
+          ),
+        );
       }
     }
   }
@@ -514,9 +547,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             ),
             const SizedBox(width: 8),
             IconButton(
-              icon: const Icon(Icons.play_circle_fill, color: AppColors.secondary, size: 32),
-              tooltip: 'Reproducir y agregar',
-              onPressed: () => _addSongToLibrary(audioService, preview, playImmediately: true),
+              icon: Icon(
+                audioService.currentSong?.id == preview.songId && audioService.isPlaying
+                    ? Icons.pause_circle_filled
+                    : Icons.play_circle_fill,
+                color: AppColors.secondary,
+                size: 32,
+              ),
+              tooltip: 'Reproducir sin agregar',
+              onPressed: () {
+                if (audioService.currentSong?.id == preview.songId) {
+                  audioService.togglePlayPause();
+                } else {
+                  _playPreviewOnly(audioService, preview);
+                }
+              },
             ),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
@@ -740,7 +785,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
-                  onPressed: () => _addSongToLibrary(audioService, preview, playImmediately: true),
+                  onPressed: () => _playPreviewOnly(audioService, preview),
                   icon: const Icon(Icons.play_arrow, size: 20),
                   label: const Text(
                     'Reproducir',

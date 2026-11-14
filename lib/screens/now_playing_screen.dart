@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
@@ -148,7 +149,7 @@ class NowPlayingScreen extends StatelessWidget {
               children: [
                 // Top Header Bar
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16.0, 36.0, 16.0, 8.0),
+                  padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 6.0),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -280,9 +281,9 @@ class NowPlayingScreen extends StatelessWidget {
                       children: [
                         const Spacer(flex: 1),
 
-                        // Album Artwork / Video Cover Card with Neon Glow Shadow
+                        // Album Artwork / Video Cover Card with Neon Glow Shadow (más alto para no recortar carátulas)
                         Expanded(
-                          flex: 10,
+                          flex: 12,
                           child: Center(
                             child: Container(
                               width: double.infinity,
@@ -301,7 +302,7 @@ class NowPlayingScreen extends StatelessWidget {
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(24),
                                 child: AspectRatio(
-                                  aspectRatio: 1.0,
+                                  aspectRatio: 0.92,
                                   child: _buildCoverImage(song, isPlaying: audioService.isPlaying),
                                 ),
                               ),
@@ -309,7 +310,7 @@ class NowPlayingScreen extends StatelessWidget {
                           ),
                         ),
                         
-                        const Spacer(flex: 2),
+                        const Spacer(flex: 1),
 
                         // Title, Artist, & Favorite Heart Button
                         Row(
@@ -624,7 +625,10 @@ class NowPlayingScreen extends StatelessWidget {
         fit: BoxFit.cover,
       );
     }
-    if (song.videoCoverPath != null && File(song.videoCoverPath!).existsSync()) {
+    final hasVideoCover = song.videoCoverPath != null &&
+        song.videoCoverPath!.isNotEmpty &&
+        (song.videoCoverPath!.startsWith('ph://') || File(song.videoCoverPath!).existsSync());
+    if (!isBackground && hasVideoCover) {
       return LoopedMutedVideoCoverWidget(videoPath: song.videoCoverPath!, isPlaying: isPlaying);
     } else if (song.localCoverPath != null && File(song.localCoverPath!).existsSync()) {
       return Image.file(
@@ -673,6 +677,7 @@ class LoopedMutedVideoCoverWidget extends StatefulWidget {
 class _LoopedMutedVideoCoverWidgetState extends State<LoopedMutedVideoCoverWidget> {
   VideoPlayerController? _controller;
   bool _isInitialized = false;
+  double _cropScale = 1.06;
 
   @override
   void initState() {
@@ -685,6 +690,8 @@ class _LoopedMutedVideoCoverWidgetState extends State<LoopedMutedVideoCoverWidge
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoPath != widget.videoPath) {
       _controller?.dispose();
+      _isInitialized = false;
+      _cropScale = 1.06;
       _initVideo();
     } else if (oldWidget.isPlaying != widget.isPlaying) {
       _syncPlayPause();
@@ -703,7 +710,31 @@ class _LoopedMutedVideoCoverWidgetState extends State<LoopedMutedVideoCoverWidge
 
   Future<void> _initVideo() async {
     try {
-      final file = File(widget.videoPath);
+      String? resolvedPath = widget.videoPath;
+      double detectedScale = 1.06;
+
+      if (Platform.isIOS) {
+        try {
+          const galleryChannel = MethodChannel('vibe/gallery');
+          final res = await galleryChannel.invokeMethod<dynamic>(
+            'resolveVideo',
+            {'ref': widget.videoPath},
+          );
+          if (res is Map) {
+            resolvedPath = res['path']?.toString();
+            final sc = (res['cropScale'] as num?)?.toDouble();
+            if (sc != null && sc > 1.0) {
+              detectedScale = sc;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (resolvedPath == null || resolvedPath.isEmpty || resolvedPath.startsWith('ph://')) {
+        return;
+      }
+
+      final file = File(resolvedPath);
       if (await file.exists()) {
         final controller = VideoPlayerController.file(file);
         await controller.initialize();
@@ -717,6 +748,7 @@ class _LoopedMutedVideoCoverWidgetState extends State<LoopedMutedVideoCoverWidge
         if (mounted) {
           setState(() {
             _controller = controller;
+            _cropScale = detectedScale;
             _isInitialized = true;
           });
         }
@@ -737,14 +769,23 @@ class _LoopedMutedVideoCoverWidgetState extends State<LoopedMutedVideoCoverWidge
     _syncPlayPause();
 
     if (_isInitialized && _controller != null && _controller!.value.isInitialized) {
-      return SizedBox.expand(
-        child: FittedBox(
-          fit: BoxFit.cover,
-          clipBehavior: Clip.hardEdge,
-          child: SizedBox(
-            width: _controller!.value.size.width,
-            height: _controller!.value.size.height,
-            child: VideoPlayer(_controller!),
+      final rawAspect = _controller!.value.aspectRatio;
+      final safeAspect = (rawAspect > 0.1 && rawAspect.isFinite) ? rawAspect : 1.0;
+
+      return ClipRect(
+        child: Transform.scale(
+          scale: _cropScale,
+          alignment: Alignment.center,
+          child: SizedBox.expand(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: SizedBox(
+                width: 1000,
+                height: 1000 / safeAspect,
+                child: VideoPlayer(_controller!),
+              ),
+            ),
           ),
         ),
       );

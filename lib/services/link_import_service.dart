@@ -175,17 +175,27 @@ class LinkImportService {
       );
     }
 
-    final urlMatch = RegExp(r'https?://\S+').firstMatch(text);
+    final urlMatch = RegExp(r'(?:https?://)?(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be|open\.spotify\.com|spotify\.link)\S+', caseSensitive: false).firstMatch(text);
     final candidate = urlMatch?.group(0) ?? text;
 
-    // YouTube playlist
-    final ytListMatch = _youtubePlaylist.firstMatch(candidate);
-    if (ytListMatch != null) {
-      final listId = ytListMatch.group(1)!;
-      if (candidate.contains('/playlist') ||
-          listId.startsWith('PL') ||
-          listId.startsWith('OLAK5uy_') ||
-          !candidate.contains('watch?v=')) {
+    final isYouTubeUrl = RegExp(r'(?:youtube\.com|youtu\.be)', caseSensitive: false).hasMatch(candidate);
+    if (isYouTubeUrl) {
+      String? ytVideoId;
+      final vParam = RegExp(r'[?&]v=([A-Za-z0-9_-]{11})').firstMatch(candidate);
+      final shortPath = RegExp(r'youtu\.be/([A-Za-z0-9_-]{11})').firstMatch(candidate);
+      final embedPath = RegExp(r'youtube\.com/(?:shorts|embed|live|v)/([A-Za-z0-9_-]{11})').firstMatch(candidate);
+      ytVideoId = vParam?.group(1) ?? shortPath?.group(1) ?? embedPath?.group(1);
+      if (ytVideoId == null && !candidate.contains('/playlist')) {
+        ytVideoId = VideoId.parseVideoId(candidate);
+      }
+
+      final ytListMatch = _youtubePlaylist.firstMatch(candidate);
+      final listId = ytListMatch?.group(1);
+
+      // Es playlist únicamente si es un enlace /playlist explícito o no apunta a un video individual
+      if (listId != null &&
+          !listId.startsWith('RD') &&
+          (candidate.contains('/playlist') || ytVideoId == null)) {
         return ParsedLink(
           LinkPlatform.youtube,
           listId,
@@ -193,16 +203,12 @@ class LinkImportService {
           type: LinkType.playlist,
         );
       }
-    }
 
-    // YouTube video individual (únicamente si es una URL de YouTube)
-    if (candidate.contains('youtube.com') || candidate.contains('youtu.be')) {
-      final ytId = VideoId.parseVideoId(candidate);
-      if (ytId != null) {
+      if (ytVideoId != null && ytVideoId.isNotEmpty) {
         return ParsedLink(
           LinkPlatform.youtube,
-          ytId,
-          'https://www.youtube.com/watch?v=$ytId',
+          ytVideoId,
+          'https://www.youtube.com/watch?v=$ytVideoId',
           type: LinkType.track,
         );
       }
@@ -349,30 +355,109 @@ class LinkImportService {
   // ---------------------------------------------------------------------------
 
   static Future<ImportPreview> _resolveYouTube(ParsedLink link) async {
+    String rawTitle = '';
+    String rawAuthor = '';
+    Duration duration = Duration.zero;
+    String? uploadYear;
+
+    // 1. Obtener detalles directamente desde InnerTube player API (rápido y sin bloqueos)
     try {
-      final video = await YouTubeStreamResolver.sharedYt.videos.get(link.id).timeout(const Duration(seconds: 15));
-      final guess = _splitArtistTitle(video.title, video.author);
-      final duration = video.duration ?? Duration.zero;
+      final visitorData = await YouTubeStreamResolver.getVisitorData();
+      final res = await http
+          .post(
+            Uri.parse('https://www.youtube.com/youtubei/v1/player?prettyPrint=false'),
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent':
+                  'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+              'X-YouTube-Client-Name': '101',
+              'X-YouTube-Client-Version': '1.02',
+              if (visitorData != null) 'X-Goog-Visitor-Id': visitorData,
+            },
+            body: json.encode({
+              'videoId': link.id,
+              'context': {
+                'client': {
+                  'clientName': 'VISIONOS',
+                  'clientVersion': '1.02',
+                  'deviceMake': 'Apple',
+                  'deviceModel': 'RealityDevice17,1',
+                  'osName': 'visionOS',
+                  'osVersion': '26.5.23O471',
+                  'hl': 'es',
+                  'gl': 'MX',
+                  if (visitorData != null) 'visitorData': visitorData,
+                },
+              },
+              'contentCheckOk': true,
+              'racyCheckOk': true,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
-      // Completar álbum, género, año y carátula cuadrada en alta resolución
-      final meta = await _lookupItunes(guess.artist, guess.title, duration);
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body) as Map<String, dynamic>;
+        final details = data['videoDetails'] as Map<String, dynamic>?;
+        if (details != null) {
+          rawTitle = (details['title'] as String?)?.trim() ?? '';
+          rawAuthor = (details['author'] as String?)?.trim() ?? '';
+          final lenSec = int.tryParse(details['lengthSeconds']?.toString() ?? '0') ?? 0;
+          if (lenSec > 0) {
+            duration = Duration(seconds: lenSec);
+          }
+        }
+        final micro = data['microformat']?['playerMicroformatRenderer'] as Map<String, dynamic>?;
+        final publishDate = micro?['publishDate'] as String?;
+        if (publishDate != null && publishDate.length >= 4) {
+          uploadYear = publishDate.substring(0, 4);
+        }
+      }
+    } catch (_) {}
 
-      return ImportPreview(
-        title: meta?.title ?? guess.title,
-        artist: meta?.artist ?? guess.artist,
-        album: meta?.album ?? 'YouTube',
-        coverUrl: meta?.coverUrl ?? video.thumbnails.highResUrl,
-        duration: (meta != null && meta.duration > Duration.zero) ? meta.duration : duration,
-        youtubeId: video.id.value,
-        sourceUrl: link.url,
-        platform: LinkPlatform.youtube,
-        genre: meta?.genre,
-        year: meta?.year ?? video.uploadDate?.year.toString(),
-      );
-    } catch (e) {
-      YouTubeStreamResolver.resetSharedYt();
-      rethrow;
+    // 2. Respaldo con YouTube oEmbed oficial si faltó el título
+    if (rawTitle.isEmpty) {
+      try {
+        final oembedUrl = Uri.parse(
+          'https://www.youtube.com/oembed?url=${Uri.encodeComponent('https://www.youtube.com/watch?v=${link.id}')}&format=json',
+        );
+        final res = await http.get(oembedUrl).timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200) {
+          final data = json.decode(res.body) as Map<String, dynamic>;
+          rawTitle = (data['title'] as String?)?.trim() ?? '';
+          rawAuthor = (data['author_name'] as String?)?.trim() ?? '';
+        }
+      } catch (_) {}
     }
+
+    // 3. Respaldo final con YoutubeExplode
+    if (rawTitle.isEmpty) {
+      try {
+        final video = await YouTubeStreamResolver.sharedYt.videos.get(link.id).timeout(const Duration(seconds: 12));
+        rawTitle = video.title;
+        rawAuthor = video.author;
+        duration = video.duration ?? Duration.zero;
+        uploadYear = video.uploadDate?.year.toString();
+      } catch (e) {
+        YouTubeStreamResolver.resetSharedYt();
+        throw Exception('No se pudo obtener la información del enlace de YouTube.');
+      }
+    }
+
+    final guess = _splitArtistTitle(rawTitle, rawAuthor);
+    final meta = await _lookupItunes(guess.artist, guess.title, duration);
+
+    return ImportPreview(
+      title: meta?.title ?? guess.title,
+      artist: meta?.artist ?? (guess.artist.isNotEmpty ? guess.artist : 'YouTube'),
+      album: meta?.album ?? 'YouTube',
+      coverUrl: meta?.coverUrl ?? 'https://i.ytimg.com/vi/${link.id}/hqdefault.jpg',
+      duration: duration > Duration.zero ? duration : (meta?.duration ?? Duration.zero),
+      youtubeId: link.id,
+      sourceUrl: link.url,
+      platform: LinkPlatform.youtube,
+      genre: meta?.genre,
+      year: meta?.year ?? uploadYear,
+    );
   }
 
   // ---------------------------------------------------------------------------
