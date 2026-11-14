@@ -876,7 +876,7 @@ final class VibeEqualizerEngine {
         unprepare: eqTapUnprepare,
         process: eqTapProcess
       )
-      var tap: Unmanaged<MTAudioProcessingTap>?
+      var tap: MTAudioProcessingTap?
       let err = MTAudioProcessingTapCreate(
         kCFAllocatorDefault,
         &callbacks,
@@ -888,7 +888,7 @@ final class VibeEqualizerEngine {
         return
       }
       let params = AVMutableAudioMixInputParameters(track: audioTrack)
-      params.audioTapProcessor = createdTap.takeRetainedValue()
+      params.audioTapProcessor = createdTap
       let mix = AVMutableAudioMix()
       mix.inputParameters = [params]
       item.audioMix = mix
